@@ -1,0 +1,13 @@
+node_modules
+dist
+
+# 构建产物
+src-tauri/target/
+
+# 运行产物与本地配置
+logs/
+*.log
+.env
+.env.*
+*.pem
+*.key
