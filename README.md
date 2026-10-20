@@ -122,6 +122,8 @@ cd src-tauri && cargo test   # 102 个单元测试
 
 </details>
 
+开发细节、架构约束与待办见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)。
+
 ## 许可证
 
 [MIT](LICENSE)
