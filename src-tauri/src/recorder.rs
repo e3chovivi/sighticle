@@ -14,7 +14,7 @@
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{sync_channel, SyncSender};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -100,6 +100,11 @@ enum Cmd {
         /// 是否采集麦克风 / 系统声音
         mic: bool,
         sys_audio: bool,
+        /// 是否把指针与蓝色光晕画进画面
+        cursor: bool,
+        cursor_glow: bool,
+        /// 输出编码参数（帧率/分辨率/画质）
+        enc: EncOptions,
         reply: SyncSender<Result<StartInfo, String>>,
     },
     Stop {
@@ -144,12 +149,27 @@ fn worker(rx: std::sync::mpsc::Receiver<Cmd>) {
                 ph,
                 mic,
                 sys_audio,
+                cursor,
+                cursor_glow,
+                enc,
                 reply,
             } => {
                 let res = if active.is_some() {
                     Err("已有录制在进行".into())
                 } else {
-                    match do_start(&dir, mode, px, py, pw, ph, mic, sys_audio) {
+                    match do_start(
+                        &dir,
+                        mode,
+                        px,
+                        py,
+                        pw,
+                        ph,
+                        mic,
+                        sys_audio,
+                        cursor,
+                        cursor_glow,
+                        enc,
+                    ) {
                         Ok((info, a)) => {
                             active = Some(a);
                             Ok(info)
@@ -185,9 +205,96 @@ fn worker(rx: std::sync::mpsc::Receiver<Cmd>) {
     }
 }
 
+/// 输出编码参数（CLI 可调，GUI 用默认值）。
+/// 降低 fps/分辨率/画质主要是为了给 AI 回看省资源：文件更小、token 更少、CPU 更低。
+#[derive(Clone, Copy, Debug)]
+pub struct EncOptions {
+    /// 输出帧率（1~60）
+    pub fps: u32,
+    /// 输出最长边上限；None = 保持原始分辨率
+    pub max_width: Option<u32>,
+    /// x264 CRF：越小越清晰、文件越大（0~51）
+    pub crf: u8,
+}
+
+impl Default for EncOptions {
+    fn default() -> Self {
+        Self {
+            fps: FPS,
+            max_width: None,
+            crf: 23,
+        }
+    }
+}
+
+impl EncOptions {
+    /// 校验并规整参数，越界直接报错而非静默夹取——Agent 传错时应立刻知道
+    pub fn validate(mut self) -> Result<Self, String> {
+        if !(1..=60).contains(&self.fps) {
+            return Err(format!("fps 需在 1 ~ 60 之间：{}", self.fps));
+        }
+        if let Some(w) = self.max_width {
+            if !(160..=8192).contains(&w) {
+                return Err(format!("scale 需在 160 ~ 8192 之间：{w}"));
+            }
+            // 编码器要求偶数宽高；这里先规整，避免 ffmpeg 直接报错
+            self.max_width = Some(w & !1);
+        }
+        if self.crf > 51 {
+            return Err(format!("crf 需在 0 ~ 51 之间：{}", self.crf));
+        }
+        Ok(self)
+    }
+}
+
+/// 可见窗口（物理像素坐标）：供 CLI / Agent 按标题定位录制目标。
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct WindowInfo {
+    pub title: String,
+    pub app_name: String,
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// 枚举当前可见窗口，保持 Z 序（最上层在前）。
+/// 跳过最小化、过小、无标题的窗口，以及本进程自己的窗口。
+pub fn list_windows() -> Result<Vec<WindowInfo>, String> {
+    let windows = xcap::Window::all().map_err(|e| e.to_string())?;
+    let self_pid = std::process::id();
+    let mut out = Vec::new();
+    for w in windows {
+        if w.is_minimized().unwrap_or(true) {
+            continue;
+        }
+        if w.pid().unwrap_or(0) == self_pid {
+            continue;
+        }
+        let title = w.title().unwrap_or_default();
+        if title.trim().is_empty() {
+            continue;
+        }
+        let (x, y) = (w.x().unwrap_or(0), w.y().unwrap_or(0));
+        let (width, height) = (w.width().unwrap_or(0), w.height().unwrap_or(0));
+        if width < 8 || height < 8 {
+            continue;
+        }
+        out.push(WindowInfo {
+            title,
+            app_name: w.app_name().unwrap_or_default(),
+            x,
+            y,
+            width,
+            height,
+        });
+    }
+    Ok(out)
+}
+
 /// 拼装 FFmpeg 编码参数：原始 RGB 管道输入 → H.264 MP4
-pub fn build_ffmpeg_args(w: u32, h: u32, out: &Path) -> Vec<String> {
-    vec![
+pub fn build_ffmpeg_args(w: u32, h: u32, out: &Path, enc: &EncOptions) -> Vec<String> {
+    let mut args = vec![
         "-y".into(),
         "-f".into(),
         "rawvideo".into(),
@@ -196,46 +303,63 @@ pub fn build_ffmpeg_args(w: u32, h: u32, out: &Path) -> Vec<String> {
         "-s".into(),
         format!("{w}x{h}"),
         "-r".into(),
-        FPS.to_string(),
+        enc.fps.to_string(),
         "-i".into(),
         "pipe:0".into(),
+    ];
+    if let Some(max_w) = enc.max_width {
+        if max_w < w {
+            // -2 保证高度为偶数（H.264 要求），且按比例缩放
+            args.push("-vf".into());
+            args.push(format!("scale={max_w}:-2:flags=bilinear"));
+        }
+    }
+    args.extend([
         "-c:v".into(),
         "libx264".into(),
         "-preset".into(),
         "veryfast".into(),
         "-crf".into(),
-        "23".into(),
+        enc.crf.to_string(),
         "-pix_fmt".into(),
         "yuv420p".into(),
         "-movflags".into(),
         "+faststart".into(),
         out.to_string_lossy().into_owned(),
-    ]
+    ]);
+    args
 }
 
 /// 摄像头录制参数：FFmpeg dshow 直接读摄像头编码为 MP4。
 /// 音频不在此处理（由独立线程写 WAV，停止后统一混流），
 /// 分辨率/帧率用设备默认值——不同摄像头能力差异大，强制指定易失败。
 /// stdin 保留为 piped：停止时写 `q` 让 FFmpeg 优雅收尾（moov 必须正常写入，否则 mp4 损坏）。
-pub fn build_camera_args(device: &str, out: &Path) -> Vec<String> {
-    vec![
+pub fn build_camera_args(device: &str, out: &Path, enc: &EncOptions) -> Vec<String> {
+    let mut args = vec![
         "-y".into(),
         "-f".into(),
         "dshow".into(),
         "-i".into(),
         format!("video={device}"),
+    ];
+    if let Some(max_w) = enc.max_width {
+        args.push("-vf".into());
+        args.push(format!("scale={max_w}:-2:flags=bilinear"));
+    }
+    args.extend([
         "-c:v".into(),
         "libx264".into(),
         "-preset".into(),
         "veryfast".into(),
         "-crf".into(),
-        "23".into(),
+        enc.crf.to_string(),
         "-pix_fmt".into(),
         "yuv420p".into(),
         "-movflags".into(),
         "+faststart".into(),
         out.to_string_lossy().into_owned(),
-    ]
+    ]);
+    args
 }
 
 /// 从 `ffmpeg -list_devices -f dshow` 的 stderr 中提取视频设备名。
@@ -280,8 +404,16 @@ pub fn parse_dshow_video_devices(stderr: &str) -> Vec<String> {
 
 /// 枚举 dshow 视频设备并返回第一个（多个摄像头时取列表首位，全部记入日志）
 pub fn dshow_video_device() -> Result<String, String> {
-    let out = Command::new("ffmpeg")
-        .args(["-hide_banner", "-list_devices", "true", "-f", "dshow", "-i", "dummy"])
+    let out = crate::ffmpeg::command()?
+        .args([
+            "-hide_banner",
+            "-list_devices",
+            "true",
+            "-f",
+            "dshow",
+            "-i",
+            "dummy",
+        ])
         .output()
         .map_err(|e| format!("调用 ffmpeg 枚举摄像头失败：{e}"))?;
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -293,12 +425,55 @@ pub fn dshow_video_device() -> Result<String, String> {
         .ok_or_else(|| "未找到摄像头设备（可能无摄像头或被系统禁用）".to_string())
 }
 
-/// 拼装导出参数：从临时录制文件裁剪 [start, end] 段。
+/// 清理异常退出遗留的录制临时文件，返回删除数量。
+///
+/// 只删「修改时间早于 `min_age`」的文件：GUI 与 CLI 允许同时运行，
+/// 无条件清理可能误删另一个进程正在录制的文件。Windows 上虽会因文件被占用
+/// 而删除失败，但依赖这个副作用太脆弱，显式加年龄门槛更稳。
+pub fn cleanup_stale_temps(dir: &Path, min_age: Duration) -> usize {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    let now = std::time::SystemTime::now();
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let is_temp = (name.starts_with("tmp_") && name.ends_with(".mp4"))
+            || (name.ends_with(".wav") && (name.starts_with("mic") || name.starts_with("sys")));
+        if !is_temp {
+            continue;
+        }
+        let old_enough = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| now.duration_since(t).ok())
+            .map(|age| age >= min_age)
+            .unwrap_or(false);
+        if old_enough && std::fs::remove_file(entry.path()).is_ok() {
+            removed += 1;
+        }
+    }
+    if removed > 0 {
+        crate::lclog!("已清理 {removed} 个遗留临时录制文件（{}）", dir.display());
+    }
+    removed
+}
+
+/// 拼接导出参数：从临时录制文件裁剪 [start, end] 段。
 /// mp4 重编码（帧级精确）；gif 走 palette 两步法并限制宽度 ≤720、12fps 控制体积。
 pub fn build_export_args(src: &str, start: f64, end: f64, dest: &str, format: &str) -> Vec<String> {
     let ss = format!("{start:.3}");
     let dur = format!("{:.3}", end - start);
-    let mut args = vec!["-y".to_string(), "-ss".to_string(), ss, "-i".to_string(), src.to_string(), "-t".to_string(), dur];
+    let mut args = vec![
+        "-y".to_string(),
+        "-ss".to_string(),
+        ss,
+        "-i".to_string(),
+        src.to_string(),
+        "-t".to_string(),
+        dur,
+    ];
     if format == "gif" {
         // GIF 容器无音轨
         args.push("-an".into());
@@ -371,7 +546,7 @@ pub fn build_mux_args(video: &str, audios: &[(String, f32)], out: &str) -> Vec<S
 
 /// 同步执行一次 FFmpeg，带超时兜底（超时即强杀，绝不让界面卡死）
 pub(crate) fn run_ffmpeg(args: &[String], timeout: Duration) -> Result<(), String> {
-    let mut child = Command::new("ffmpeg")
+    let mut child = crate::ffmpeg::command()?
         .args(args)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -401,7 +576,14 @@ pub(crate) fn run_ffmpeg(args: &[String], timeout: Duration) -> Result<(), Strin
 
 /// 将裁剪区域（相对显示器左上角的物理像素，可为负/越界）收敛到显示器范围内。
 /// 收敛后宽或高 < 2 像素返回 None。
-pub fn clamp_crop(x: i32, y: i32, w: u32, h: u32, mon_w: u32, mon_h: u32) -> Option<(u32, u32, u32, u32)> {
+pub fn clamp_crop(
+    x: i32,
+    y: i32,
+    w: u32,
+    h: u32,
+    mon_w: u32,
+    mon_h: u32,
+) -> Option<(u32, u32, u32, u32)> {
     let mut x = x as i64;
     let mut y = y as i64;
     let mut w = w as i64;
@@ -427,7 +609,15 @@ pub fn clamp_crop(x: i32, y: i32, w: u32, h: u32, mon_w: u32, mon_h: u32) -> Opt
 /// 通道顺序：xcap 的 `Frame.raw` 已经是 **RGBA**——xcap 内部 `texture_to_frame` 结尾
 /// 调用 `bgra_to_rgba()` 做过一次通道交换。这里**绝不能再交换 R/B**，否则画面整体偏色
 /// （曾经因为多交换一次，紫色被还原成了黄色）。
-fn crop_frame_to_rgb(raw: &[u8], frame_w: u32, frame_h: u32, x: u32, y: u32, w: u32, h: u32) -> Option<Vec<u8>> {
+fn crop_frame_to_rgb(
+    raw: &[u8],
+    frame_w: u32,
+    frame_h: u32,
+    x: u32,
+    y: u32,
+    w: u32,
+    h: u32,
+) -> Option<Vec<u8>> {
     if x + w > frame_w || y + h > frame_h {
         return None;
     }
@@ -449,6 +639,9 @@ fn crop_frame_to_rgb(raw: &[u8], frame_w: u32, frame_h: u32, x: u32, y: u32, w: 
 
 /// 开始录制。px/py/pw/ph 为全局物理像素坐标（已由覆盖层窗口换算）；
 /// mic / sys_audio 指定是否采集对应音频轨道。
+/// cursor / cursor_glow 控制是否把指针及其蓝色光晕画进画面（摄像头模式不适用）。
+/// enc 控制输出帧率、分辨率上限与画质。
+#[allow(clippy::too_many_arguments)]
 pub fn start(
     dir: PathBuf,
     mode: String,
@@ -458,6 +651,9 @@ pub fn start(
     ph: u32,
     mic: bool,
     sys_audio: bool,
+    cursor: bool,
+    cursor_glow: bool,
+    enc: EncOptions,
 ) -> Result<StartInfo, String> {
     let (tx, rx) = sync_channel(1);
     cmd_tx()
@@ -470,6 +666,9 @@ pub fn start(
             ph,
             mic,
             sys_audio,
+            cursor,
+            cursor_glow,
+            enc,
             reply: tx,
         })
         .map_err(|_| "录制工作线程未运行".to_string())?;
@@ -506,6 +705,33 @@ pub fn capture(px: i32, py: i32, pw: u32, ph: u32) -> Result<crate::ScreenshotDa
         .map_err(|_| "采集工作线程未运行".to_string())?;
     rx.recv_timeout(Duration::from_secs(10))
         .map_err(|_| "截图超时".to_string())?
+}
+
+/// 拼装"整段搬运"参数：录制临时文件已是最终编码（H.264/AAC），
+/// 整段导出时只需换个容器位置，直接 copy 流即可。
+pub fn build_remux_args(src: &str, dest: &str) -> Vec<String> {
+    vec![
+        "-y".into(),
+        "-i".into(),
+        src.into(),
+        "-c".into(),
+        "copy".into(),
+        "-movflags".into(),
+        "+faststart".into(),
+        dest.into(),
+    ]
+}
+
+/// 整段导出（不重编码）：耗时接近磁盘拷贝，也避免二次编码带来的画质损失。
+/// 只有裁剪选段或转 GIF 才需要走 `export` 重编码。
+pub fn export_copy(src: &str, dest: &str) -> Result<String, String> {
+    let args = build_remux_args(src, dest);
+    crate::lclog!("整段导出（copy）→ {dest}");
+    run_ffmpeg(&args, Duration::from_secs(120)).map_err(|e| {
+        crate::lclog!("!! 整段导出失败：{e}");
+        format!("导出失败：{e}")
+    })?;
+    Ok(dest.to_string())
 }
 
 /// 导出录屏：裁剪 [start,end] 段编码为 MP4/GIF，写入 dest。
@@ -556,6 +782,7 @@ pub fn frames_to_emit(elapsed_ms: u64, emitted: u64, fps: u32) -> u64 {
     target.saturating_sub(emitted)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn do_start(
     dir: &Path,
     mode: String,
@@ -565,30 +792,31 @@ fn do_start(
     ph: u32,
     mic: bool,
     sys_audio: bool,
+    cursor: bool,
+    cursor_glow: bool,
+    enc: EncOptions,
 ) -> Result<(StartInfo, Active), String> {
     let since = since_last_stop_ms()
         .map(|ms| format!("{ms}ms"))
         .unwrap_or_else(|| "无（本次为首次录制）".into());
     crate::lclog!(
-        "开始录制：mode={mode} 物理区域=({px},{py} {pw}x{ph}) mic={mic} sys={sys_audio} 距上次停止={since}"
+        "开始录制：mode={mode} 物理区域=({px},{py} {pw}x{ph}) mic={mic} sys={sys_audio} fps={} scale={:?} crf={} 距上次停止={since}",
+        enc.fps,
+        enc.max_width,
+        enc.crf
     );
 
-    // FFmpeg 可用性检查（开发期使用系统 PATH，后续版本打包内置）
-    if let Err(e) = Command::new("ffmpeg")
-        .arg("-version")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-    {
+    // FFmpeg 可用性检查（不打包，见 ffmpeg.rs 的设计说明）。
+    // 提前失败并给出可复制的安装命令，比录到一半才报错有用得多。
+    if let Err(e) = crate::ffmpeg::locate() {
         crate::lclog!("FFmpeg 不可用：{e}");
-        return Err("未找到 ffmpeg：请先安装并加入 PATH".to_string());
+        return Err(e);
     }
 
     // 摄像头录制：FFmpeg dshow 直录，不经 WGC/补帧管线（无屏幕区域概念）
     if mode == "camera" {
-        return do_start_camera(dir, mic, sys_audio);
+        return do_start_camera(dir, mic, sys_audio, enc);
     }
-
     let mon = Monitor::from_point(px + pw as i32 / 2, py + ph as i32 / 2).map_err(|e| {
         crate::lclog!("选择显示器失败：{e:?}");
         e.to_string()
@@ -608,8 +836,8 @@ fn do_start(
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let tmp_path = dir.join(format!("tmp_{}.mp4", crate::stamp()));
 
-    let args = build_ffmpeg_args(cw, ch, &tmp_path);
-    let mut child = Command::new("ffmpeg")
+    let args = build_ffmpeg_args(cw, ch, &tmp_path, &enc);
+    let mut child = crate::ffmpeg::command()?
         .args(&args)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
@@ -649,9 +877,7 @@ fn do_start(
                 },
                 Err(e) => {
                     last_err = format!("创建采集器失败：{e:?}");
-                    crate::lclog!(
-                        "video_recorder() 失败（第 {attempt}/{WGC_ATTEMPTS} 次）：{e:?}"
-                    );
+                    crate::lclog!("video_recorder() 失败（第 {attempt}/{WGC_ATTEMPTS} 次）：{e:?}");
                 }
             }
             // 最后一次失败后无需再等，直接给出结论
@@ -693,11 +919,24 @@ fn do_start(
     // 并按 FPS 节拍把最新画面写出（静止期重复上一帧），保证成片时长 == 录制时长。
     let stop_flag = Arc::new(AtomicBool::new(false));
     let flag = stop_flag.clone();
+    // 帧左上角对应的全局屏幕坐标：指针位置是全局坐标，合成时要减掉这个原点。
+    // cx0/cy0 是显示器内的裁剪偏移（u32），mon_x/mon_y 是显示器原点（i32，可为负，
+    // 副屏在主屏左侧时就是负数），所以统一折算到 i32。
+    let screen_x0 = mon_x + cx0 as i32;
+    let screen_y0 = mon_y + cy0 as i32;
     let writer = std::thread::spawn(move || {
-        let period = Duration::from_micros(1_000_000 / FPS as u64);
+        let fps = enc.fps;
+        let period = Duration::from_micros(1_000_000 / fps as u64);
         let start = Instant::now();
         let mut emitted: u64 = 0;
         let mut latest: Option<Vec<u8>> = None;
+        let mut compositor = crate::cursor::CursorCompositor::new(cursor, cursor_glow);
+        // 合成结果写到这里，`latest` 始终保持干净——否则上一帧的指针会残留在画面里。
+        // 新画面到达时整帧同步一次；静止画面期间只回填指针覆盖过的小矩形，
+        // 避免每输出一帧都整帧拷贝（4K 下这是可观的开销）。
+        let mut out_frame: Vec<u8> = Vec::new();
+        let mut synced = false;
+        let mut dirty: Option<crate::cursor::Rect> = None;
         loop {
             if flag.load(Ordering::Relaxed) {
                 break;
@@ -708,6 +947,7 @@ fn do_start(
                         crop_frame_to_rgb(&frame.raw, frame.width, frame.height, cx0, cy0, cw, ch)
                     {
                         latest = Some(rgb);
+                        synced = false;
                     }
                 }
                 // 静止期没有新帧：继续推进时间轴（下方会用最新画面补齐）
@@ -718,10 +958,22 @@ fn do_start(
                 continue;
             };
             // 按真实时间轴补写：静止期重复最新画面，使成片时长 == 录制时长
-            let mut due =
-                frames_to_emit(start.elapsed().as_millis() as u64, emitted, FPS);
+            let mut due = frames_to_emit(start.elapsed().as_millis() as u64, emitted, fps);
             while due > 0 {
-                if stdin.write_all(rgb).is_err() {
+                if compositor.enabled() {
+                    if !synced {
+                        // 首帧整帧同步一次；此时没有上一帧的指针要擦，dirty 自然为 None
+                        out_frame.resize(rgb.len(), 0);
+                        out_frame.copy_from_slice(rgb);
+                        synced = true;
+                    } else if let Some(prev) = dirty.take() {
+                        crate::cursor::restore_rect(&mut out_frame, rgb, cw, prev);
+                    }
+                    dirty = compositor.composite(&mut out_frame, cw, ch, screen_x0, screen_y0);
+                    if stdin.write_all(&out_frame).is_err() {
+                        return;
+                    }
+                } else if stdin.write_all(rgb).is_err() {
                     return;
                 }
                 emitted += 1;
@@ -757,16 +1009,21 @@ fn do_start(
 
 /// 摄像头录制启动：FFmpeg dshow 直录到临时 mp4，不经 WGC 采集与补帧线程。
 /// 音频仍走独立线程 WAV（与屏幕录制同一条管线），停止时统一混流。
-fn do_start_camera(dir: &Path, mic: bool, sys_audio: bool) -> Result<(StartInfo, Active), String> {
+fn do_start_camera(
+    dir: &Path,
+    mic: bool,
+    sys_audio: bool,
+    enc: EncOptions,
+) -> Result<(StartInfo, Active), String> {
     crate::lclog!("开始摄像头录制：mic={mic} sys={sys_audio}");
     let device = dshow_video_device()?;
     let dir = dir.to_path_buf();
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let tmp_path = dir.join(format!("tmp_{}.mp4", crate::stamp()));
 
-    let args = build_camera_args(&device, &tmp_path);
+    let args = build_camera_args(&device, &tmp_path, &enc);
     crate::lclog!("摄像头录制 ffmpeg {}", args.join(" "));
-    let mut child = Command::new("ffmpeg")
+    let mut child = crate::ffmpeg::command()?
         .args(&args)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
@@ -828,7 +1085,8 @@ fn do_start_camera(dir: &Path, mic: bool, sys_audio: bool) -> Result<(StartInfo,
 }
 
 fn do_capture(px: i32, py: i32, pw: u32, ph: u32) -> Result<crate::ScreenshotData, String> {
-    let mon = Monitor::from_point(px + pw as i32 / 2, py + ph as i32 / 2).map_err(|e| e.to_string())?;
+    let mon =
+        Monitor::from_point(px + pw as i32 / 2, py + ph as i32 / 2).map_err(|e| e.to_string())?;
     let mon_x = mon.x().map_err(|e| e.to_string())?;
     let mon_y = mon.y().map_err(|e| e.to_string())?;
     let mon_w = mon.width().map_err(|e| e.to_string())?;
@@ -946,7 +1204,10 @@ fn do_stop(active: Active, discard: bool) -> Result<StopResult, String> {
         let _ = std::fs::remove_file(&tmp_path);
         cleanup_audio(&audio_files);
         crate::lclog!("录制已放弃，临时文件清理完毕");
-        return Ok(StopResult { path: None, seconds });
+        return Ok(StopResult {
+            path: None,
+            seconds,
+        });
     }
 
     // 有音频就把它混入视频（视频流直接 copy，不重编码），产出带声文件供预览与裁剪；
@@ -970,7 +1231,11 @@ fn do_stop(active: Active, discard: bool) -> Result<StopResult, String> {
                 (path, gain)
             })
             .collect();
-        let args = build_mux_args(&tmp_path.to_string_lossy(), &tracks, &muxed.to_string_lossy());
+        let args = build_mux_args(
+            &tmp_path.to_string_lossy(),
+            &tracks,
+            &muxed.to_string_lossy(),
+        );
         crate::lclog!("开始混流：ffmpeg {}", args.join(" "));
         match run_ffmpeg(&args, Duration::from_secs(60)) {
             Ok(()) => {
@@ -1002,16 +1267,72 @@ mod tests {
 
     #[test]
     fn ffmpeg_args_shape() {
-        let args = build_ffmpeg_args(640, 480, Path::new("out.mp4"));
+        let args = build_ffmpeg_args(640, 480, Path::new("out.mp4"), &EncOptions::default());
         assert!(args.contains(&"640x480".to_string()));
         assert!(args.contains(&"libx264".to_string()));
         assert!(args.contains(&"pipe:0".to_string()));
         assert_eq!(args.last().unwrap(), "out.mp4");
+        // 默认不缩放，保持原始分辨率
+        assert!(!args.contains(&"-vf".to_string()));
+    }
+
+    #[test]
+    fn ffmpeg_args_apply_fps_crf_and_scale() {
+        let enc = EncOptions {
+            fps: 15,
+            max_width: Some(1280),
+            crf: 28,
+        };
+        let args = build_ffmpeg_args(2560, 1440, Path::new("out.mp4"), &enc);
+        let r = args.iter().position(|a| a == "-r").unwrap();
+        assert_eq!(args[r + 1], "15", "帧率应可调");
+        let crf = args.iter().position(|a| a == "-crf").unwrap();
+        assert_eq!(args[crf + 1], "28", "画质应可调");
+        let vf = args.iter().position(|a| a == "-vf").unwrap();
+        assert_eq!(args[vf + 1], "scale=1280:-2:flags=bilinear");
+    }
+
+    #[test]
+    fn ffmpeg_args_skip_upscale() {
+        // 目标宽度大于源宽度时不应放大，避免白白增加码率
+        let enc = EncOptions {
+            max_width: Some(1920),
+            ..EncOptions::default()
+        };
+        let args = build_ffmpeg_args(1280, 720, Path::new("out.mp4"), &enc);
+        assert!(!args.contains(&"-vf".to_string()));
+    }
+
+    #[test]
+    fn enc_options_reject_bad_values() {
+        let bad_fps = EncOptions {
+            fps: 0,
+            ..EncOptions::default()
+        };
+        assert!(bad_fps.validate().is_err(), "fps=0 应被拒绝");
+        let bad_crf = EncOptions {
+            crf: 60,
+            ..EncOptions::default()
+        };
+        assert!(bad_crf.validate().is_err(), "crf>51 应被拒绝");
+        let odd = EncOptions {
+            max_width: Some(1281),
+            ..EncOptions::default()
+        };
+        assert_eq!(
+            odd.validate().unwrap().max_width,
+            Some(1280),
+            "应规整为偶数"
+        );
     }
 
     #[test]
     fn camera_args_shape() {
-        let args = build_camera_args("Integrated Camera", Path::new("cam.mp4"));
+        let args = build_camera_args(
+            "Integrated Camera",
+            Path::new("cam.mp4"),
+            &EncOptions::default(),
+        );
         assert!(args.contains(&"dshow".to_string()));
         assert!(
             args.contains(&"video=Integrated Camera".to_string()),
@@ -1038,7 +1359,10 @@ mod tests {
         let devices = parse_dshow_video_devices(stderr);
         assert_eq!(
             devices,
-            vec!["Integrated Camera".to_string(), "OBS Virtual Camera".to_string()],
+            vec![
+                "Integrated Camera".to_string(),
+                "OBS Virtual Camera".to_string()
+            ],
             "应取到两个视频设备且跳过 Alternative name 行"
         );
     }
@@ -1123,7 +1447,10 @@ mod tests {
     fn mux_args_single_audio_applies_gain() {
         let audios = vec![("mic.wav".to_string(), 2.5f32)];
         let args = build_mux_args("v.mp4", &audios, "out.mp4");
-        assert!(args.contains(&"copy".to_string()), "视频流应直接 copy 不重编码");
+        assert!(
+            args.contains(&"copy".to_string()),
+            "视频流应直接 copy 不重编码"
+        );
         assert!(args.contains(&"aac".to_string()));
         assert!(!args.iter().any(|a| a.contains("amix")), "单路不需要混音");
         let fc = args.iter().position(|a| a == "-filter_complex").unwrap();
@@ -1146,7 +1473,10 @@ mod tests {
         let fc = args.iter().position(|a| a == "-filter_complex").unwrap();
         let filter = &args[fc + 1];
         assert!(filter.contains("volume=3.00"), "麦克风增益应生效：{filter}");
-        assert!(filter.contains("volume=0.50"), "系统声音增益应生效：{filter}");
+        assert!(
+            filter.contains("volume=0.50"),
+            "系统声音增益应生效：{filter}"
+        );
         assert!(filter.contains("amix=inputs=2"));
         assert!(filter.contains("normalize=0"), "混音不得自动衰减音量");
         assert!(args.contains(&"copy".to_string()));
@@ -1166,6 +1496,14 @@ mod tests {
         let args = build_export_args("in.mp4", 1.0, 4.0, "out.mp4", "mp4");
         assert!(!args.contains(&"-an".to_string()));
         assert!(args.contains(&"aac".to_string()));
+    }
+
+    #[test]
+    fn remux_args_copy_streams() {
+        let args = build_remux_args("in.mp4", "out.mp4");
+        assert!(args.contains(&"copy".to_string()), "整段导出不应重编码");
+        assert!(!args.contains(&"libx264".to_string()));
+        assert_eq!(args.last().unwrap(), "out.mp4");
     }
 
     #[test]
@@ -1191,18 +1529,63 @@ mod tests {
     }
 
     #[test]
+    fn cleanup_removes_only_old_temp_files() {
+        // 把文件修改时间改成"多少秒之前"
+        fn set_age(path: &Path, age: Duration) {
+            let f = std::fs::OpenOptions::new().write(true).open(path).unwrap();
+            f.set_modified(std::time::SystemTime::now() - age).unwrap();
+        }
+
+        let dir = std::env::temp_dir().join(format!("lc-clean-{}", crate::stamp()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let old_tmp = dir.join("tmp_20200101_000000.mp4");
+        let old_wav = dir.join("mic_20200101.wav");
+        let new_tmp = dir.join("tmp_20200101_000001.mp4");
+        let keep = dir.join("user_video.mp4");
+        for p in [&old_tmp, &old_wav, &new_tmp, &keep] {
+            std::fs::write(p, b"x").unwrap();
+        }
+        set_age(&old_tmp, Duration::from_secs(3 * 3600));
+        set_age(&old_wav, Duration::from_secs(3 * 3600));
+
+        // 门槛 1 小时：只删两个"3 小时前"的临时文件
+        let removed = cleanup_stale_temps(&dir, Duration::from_secs(3600));
+        assert_eq!(removed, 2, "只应清理超过年龄门槛的临时文件");
+        assert!(!old_tmp.exists() && !old_wav.exists());
+        assert!(new_tmp.exists(), "新文件可能是另一个进程正在录制的");
+        assert!(keep.exists(), "用户文件绝不能删");
+
+        // 门槛设为 0：剩下的新临时文件也应被清理
+        assert_eq!(cleanup_stale_temps(&dir, Duration::from_secs(0)), 1);
+        assert!(!new_tmp.exists());
+        assert!(keep.exists());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn clamp_inside() {
-        assert_eq!(clamp_crop(100, 100, 200, 150, 1920, 1080), Some((100, 100, 200, 150)));
+        assert_eq!(
+            clamp_crop(100, 100, 200, 150, 1920, 1080),
+            Some((100, 100, 200, 150))
+        );
     }
 
     #[test]
     fn clamp_right_bottom_overflow() {
-        assert_eq!(clamp_crop(1900, 1060, 100, 100, 1920, 1080), Some((1900, 1060, 20, 20)));
+        assert_eq!(
+            clamp_crop(1900, 1060, 100, 100, 1920, 1080),
+            Some((1900, 1060, 20, 20))
+        );
     }
 
     #[test]
     fn clamp_negative_origin() {
-        assert_eq!(clamp_crop(-10, -20, 100, 100, 1920, 1080), Some((0, 0, 90, 80)));
+        assert_eq!(
+            clamp_crop(-10, -20, 100, 100, 1920, 1080),
+            Some((0, 0, 90, 80))
+        );
     }
 
     #[test]

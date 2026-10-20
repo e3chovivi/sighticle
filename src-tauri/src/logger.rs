@@ -64,8 +64,8 @@ pub fn path() -> Option<PathBuf> {
 
 /// 目录选择策略：优先用 `preferred`（能创建或已存在就采用），否则回退到 `fallback`。
 ///
-/// 用途：用户要求日志放 D 盘（别占系统盘），但换台只有 C 盘的机器不能因此丢掉日志能力，
-/// 所以拿不到首选目录时必须静默回退，而不是让日志初始化失败。
+/// 用途：用户可能通过 `LIGHT_CAPTURE_LOG_DIR` 把日志改到别的盘（别占系统盘），
+/// 但目标盘不存在或不可写时不能因此丢掉日志能力，所以拿不到首选目录时必须静默回退。
 pub fn prefer_dir(preferred: &Path, fallback: &Path) -> PathBuf {
     if fs::create_dir_all(preferred).is_ok() {
         preferred.to_path_buf()

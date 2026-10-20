@@ -6,11 +6,14 @@ pub mod cli;
 
 mod asr;
 mod audio;
+mod cursor;
+mod ffmpeg;
+mod frames;
 mod logger;
 mod recorder;
 mod settings;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use base64::Engine;
 use tauri::{
@@ -20,8 +23,20 @@ use tauri::{
 };
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
-/// 日志根目录：放 D 盘，不占用系统盘。若该盘不可用（换台只有 C 盘的机器）自动回退。
-const LOG_ROOT_ON_D: &str = r"D:\light-capture";
+/// 应用标识，必须与 `tauri.conf.json` 的 `identifier` 保持一致：
+/// CLI 用它定位与 GUI 相同的设置/临时目录，设置模块用它做旧版配置迁移。
+pub const APP_IDENTIFIER: &str = "io.github.e3chovivi.light-capture";
+/// 模板时期的旧标识，仅用于把老用户的设置迁移过来。
+pub const LEGACY_IDENTIFIER: &str = "com.tauri-app.light-capture";
+
+/// 日志目录：默认放应用数据目录；用环境变量 `LIGHT_CAPTURE_LOG_DIR` 可整体改到别处
+/// （例如放 D 盘避免占用系统盘）。目标不可写时回退到应用数据目录。
+pub fn log_dir(app_data: &Path) -> PathBuf {
+    match std::env::var("LIGHT_CAPTURE_LOG_DIR") {
+        Ok(v) if !v.trim().is_empty() => logger::prefer_dir(Path::new(v.trim()), app_data),
+        _ => app_data.to_path_buf(),
+    }
+}
 
 const OVERLAY_LABEL: &str = "overlay";
 const RECBAR_LABEL: &str = "recbar";
@@ -92,6 +107,13 @@ pub fn stamp() -> String {
     chrono::Local::now().format("%Y%m%d_%H%M%S").to_string()
 }
 
+/// 覆盖层每次变为可见时通知前端刷新窗口快照：
+/// 悬停识别 / 单击选窗用的窗口列表若停留在应用启动时的那一份，
+/// 新开的窗口、挪过位置的窗口都会命中错误的目标（"自动捕获不准"的主因）。
+fn notify_overlay_shown(app: &AppHandle) {
+    let _ = app.emit_to(OVERLAY_LABEL, "overlay-shown", ());
+}
+
 fn toggle_overlay(app: &AppHandle) {
     if let Some(win) = app.get_webview_window(OVERLAY_LABEL) {
         match win.is_visible() {
@@ -103,6 +125,7 @@ fn toggle_overlay(app: &AppHandle) {
                 lclog!("覆盖层：显示");
                 let _ = win.show();
                 let _ = win.set_focus();
+                notify_overlay_shown(app);
             }
         }
     }
@@ -243,36 +266,121 @@ fn hide_recbar(app: AppHandle) {
     }
 }
 
-/// 显示（并聚焦）覆盖层窗口。
-/// 截图/录屏前会把覆盖层临时藏起来（见下方说明），完成后由前端调它恢复。
+/// 显示（并聚焦）覆盖层窗口，并通知前端刷新窗口快照。
+/// 不支持采集排除的系统上，截图/录屏前会把覆盖层临时藏起来（见 hide_overlay_and_settle），
+/// 完成后由前端调它恢复；采集排除生效时这是个无副作用的空操作。
 #[tauri::command]
 fn show_overlay(app: AppHandle) {
     if let Some(win) = app.get_webview_window(OVERLAY_LABEL) {
         let _ = win.show();
         let _ = win.set_focus();
+        notify_overlay_shown(&app);
     }
 }
 
 /// 隐藏覆盖层并等待合成器真正把它从画面里移除。
 ///
-/// 为什么必须这么做：启用 xcap 的 WGC 后，采集到的是**真实合成画面**，
+/// 为什么需要：启用 xcap 的 WGC 后，采集到的是**真实合成画面**，
 /// 会把我们自己覆盖层的内容一起拍进去——覆盖层带一层深色蒙版，且框选区域上还叠了
 /// 10% 的紫色填充，结果就是截图/录像整体"蒙了一层紫色"。
-/// `hide()` 是异步生效的，必须留出一点时间让 DWM 重新合成，否则仍可能拍到残影。
+/// `hide()` 是异步生效的，必须等 DWM 重新合成，否则仍可能拍到残影。
+/// （仅在采集排除未生效时使用，见 prepare_capture。）
 fn hide_overlay_and_settle(app: &AppHandle) {
     if let Some(win) = app.get_webview_window(OVERLAY_LABEL) {
         let _ = win.hide();
     }
-    std::thread::sleep(OVERLAY_HIDE_SETTLE);
+    wait_for_composition();
 }
 
-/// 覆盖层隐藏后等待合成的时长。取两帧左右，兼顾可靠性与响应速度。
-const OVERLAY_HIDE_SETTLE: std::time::Duration = std::time::Duration::from_millis(120);
+/// 等待 DWM 把"覆盖层已隐藏"真正合成进画面后再返回。
+/// DwmFlush 会阻塞到下一次合成完成，连续两次确保移除已生效，再留 25ms
+/// 吸收 WGC 取帧的时序抖动。比原先固定睡 120ms 更快也更稳——这段等待
+/// 是截图"顿一下"的主要来源之一。
+fn wait_for_composition() {
+    #[cfg(windows)]
+    {
+        for _ in 0..2 {
+            unsafe {
+                let _ = windows::Win32::Graphics::Dwm::DwmFlush();
+            }
+        }
+    }
+    // 非 Windows 没有 DWM；保留同样的等待时长，让上位逻辑行为一致
+    #[cfg(not(windows))]
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    std::thread::sleep(std::time::Duration::from_millis(25));
+}
+
+/// 覆盖层是否已从屏幕采集画面排除（WDA_EXCLUDEFROMCAPTURE 生效）。
+/// true：截图时覆盖层无需隐藏，界面全程不闪；false：走"隐藏 + 等合成"的老路径。
+static OVERLAY_EXCLUDED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// 尝试把窗口从屏幕采集画面中排除（WDA_EXCLUDEFROMCAPTURE）：
+/// 屏幕采集 API（WGC / 截图 / 录屏）会完全"看不见"这个窗口，露出其后面的桌面内容。
+/// 覆盖层与录制控制条都用它：截图全程不用隐藏界面，录制画面里也永远不会出现控制条。
+///
+/// 仅 Windows 10 2004（build 19041）起支持；更老的系统该值会**退化为 WDA_MONITOR
+/// （采集呈黑色）**——覆盖层是全屏窗口，会让整张截图变黑。因此先查系统 build，
+/// 任何不确定都返回 false 回退老路径，绝不牺牲截图正确性。
+#[cfg(windows)]
+fn exclude_from_capture(win: &tauri::WebviewWindow) -> bool {
+    use windows::Wdk::System::SystemServices::RtlGetVersion;
+    use windows::Win32::System::SystemInformation::OSVERSIONINFOW;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE,
+    };
+    let build_supported = unsafe {
+        let mut vi = OSVERSIONINFOW {
+            dwOSVersionInfoSize: std::mem::size_of::<OSVERSIONINFOW>() as u32,
+            ..Default::default()
+        };
+        RtlGetVersion(&mut vi).0 == 0 && vi.dwBuildNumber >= 19041
+    };
+    if !build_supported {
+        return false;
+    }
+    match win.hwnd() {
+        Ok(hwnd) => unsafe { SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE).is_ok() },
+        Err(_) => false,
+    }
+}
+
+#[cfg(not(windows))]
+fn exclude_from_capture(_win: &tauri::WebviewWindow) -> bool {
+    false
+}
+
+/// 截图前准备采集画面：
+///
+/// - 采集排除生效：什么都不用做——覆盖层保持可见，采集画面里没有它，界面全程不闪；
+/// - 否则隐藏覆盖层并等合成（否则紫色蒙版会被拍进截图）。
+///
+/// 无论走哪条路，前端采集后都会调 show_overlay 兜底恢复界面。
+fn prepare_capture(app: &AppHandle) {
+    if OVERLAY_EXCLUDED.load(std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    hide_overlay_and_settle(app);
+}
+
+/// 录制启动前隐藏覆盖层：录制期间鼠标必须能自由操作电脑。
+/// 采集排除生效时无需等合成——画面里本来就没有覆盖层。
+fn hide_overlay_before_recording(app: &AppHandle) {
+    if let Some(win) = app.get_webview_window(OVERLAY_LABEL) {
+        let _ = win.hide();
+    }
+    if !OVERLAY_EXCLUDED.load(std::sync::atomic::Ordering::Relaxed) {
+        wait_for_composition();
+    }
+}
 
 /// 覆盖层窗口内的逻辑选区 → 全局物理像素区域。
 /// 覆盖层是全屏窗口，其窗口坐标 + 自身缩放因子即可把 client 坐标精确换算到物理像素，
 /// 天然兼容多显示器与混合缩放，无需自行推导多屏布局。
-fn overlay_physical_region(app: &AppHandle, region: &Selection) -> Result<(i32, i32, u32, u32), String> {
+fn overlay_physical_region(
+    app: &AppHandle,
+    region: &Selection,
+) -> Result<(i32, i32, u32, u32), String> {
     let win = app
         .get_webview_window(OVERLAY_LABEL)
         .ok_or_else(|| "覆盖层窗口不存在".to_string())?;
@@ -289,26 +397,31 @@ fn overlay_physical_region(app: &AppHandle, region: &Selection) -> Result<(i32, 
 /// 截图与录屏共用同一条工作线程串行执行（见 recorder.rs 模块头说明），
 /// 保证 xcap 内部全局 D3D 状态不被并发使用，根治"参数错误"。
 ///
-/// 注意：采集前会先把覆盖层隐藏（见 hide_overlay_and_settle），因此返回后
-/// 前端必须调用 show_overlay 把界面显示出来。
+/// 采集画面的准备见 prepare_capture：采集排除生效时覆盖层全程可见；
+/// 否则会先隐藏覆盖层，返回后前端必须调用 show_overlay 把界面显示出来
+/// （无论哪条路，前端都调一次 show_overlay 兜底，是安全的空操作）。
 #[tauri::command]
-async fn capture_region_screenshot(app: AppHandle, region: Selection) -> Result<ScreenshotData, String> {
+async fn capture_region_screenshot(
+    app: AppHandle,
+    region: Selection,
+) -> Result<ScreenshotData, String> {
     if !region.is_valid() {
         crate::lclog!("截图请求被拒：选区过小");
         return Err("选区过小".into());
     }
-    // 物理区域依赖覆盖层窗口的位置，必须在隐藏之前算好
+    // 物理区域依赖覆盖层窗口的位置，必须在采集之前算好
     let (px, py, pw, ph) = overlay_physical_region(&app, &region)?;
     crate::lclog!(
-        "截图请求：逻辑=({},{} {}x{}) 物理=({px},{py} {pw}x{ph})",
+        "截图请求：逻辑=({},{} {}x{}) 物理=({px},{py} {pw}x{ph}) 采集排除={}",
         region.x,
         region.y,
         region.width,
-        region.height
+        region.height,
+        OVERLAY_EXCLUDED.load(std::sync::atomic::Ordering::Relaxed)
     );
     let app2 = app.clone();
     let shot = tauri::async_runtime::spawn_blocking(move || {
-        hide_overlay_and_settle(&app2);
+        prepare_capture(&app2);
         recorder::capture(px, py, pw, ph)
     })
     .await
@@ -361,6 +474,8 @@ pub struct WindowRect {
 
 /// 枚举当前可见窗口，换算为覆盖层逻辑坐标。
 /// 跳过最小化、无标题以及本应用自身的窗口。
+/// **保持 Z 序（最上层在前）**：xcap 底层用 EnumWindows 按 Z 序遍历，
+/// 前端悬停/单击命中时取"第一个包含该点的窗口"（最上层），依赖此顺序。
 #[tauri::command]
 fn list_windows(app: AppHandle) -> Result<Vec<WindowRect>, String> {
     let overlay = app
@@ -439,12 +554,26 @@ async fn start_recording(
         .app_local_data_dir()
         .map_err(|e| e.to_string())?
         .join("recordings");
-    // 先藏起覆盖层再开始采集：WGC 采集真实合成画面，否则录像开头会拍进
-    // 覆盖层的深色蒙版与紫色选区（与截图偏紫是同一个原因）
+    // 先藏起覆盖层再开始采集：录制期间鼠标要能自由操作。
+    // WGC 采集真实合成画面，不隐藏的话录像开头会拍进覆盖层的深色蒙版与紫色选区
+    // （与截图偏紫是同一个原因）；采集排除生效时画面里本就没有覆盖层，无需等合成。
     let app2 = app.clone();
+    let st = settings::get();
     let started = tauri::async_runtime::spawn_blocking(move || {
-        hide_overlay_and_settle(&app2);
-        recorder::start(rec_dir, mode, px, py, pw, ph, mic, sys_audio)
+        hide_overlay_before_recording(&app2);
+        recorder::start(
+            rec_dir,
+            mode,
+            px,
+            py,
+            pw,
+            ph,
+            mic,
+            sys_audio,
+            st.cursor_overlay,
+            st.cursor_glow,
+            recorder::EncOptions::default(),
+        )
     })
     .await
     .map_err(|e| format!("录制任务异常：{e}"))?;
@@ -486,7 +615,13 @@ async fn stop_recording(discard: bool) -> Result<recorder::StopResult, String> {
 /// 导出录屏：把临时录制文件按 [start, end] 裁剪编码为 MP4 或 GIF，写入用户选择的目标路径。
 /// spawn_blocking：FFmpeg 裁剪编码可能耗时较长，不占用异步运行时线程。
 #[tauri::command]
-async fn export_recording(src: String, start: f64, end: f64, dest: String, format: String) -> Result<String, String> {
+async fn export_recording(
+    src: String,
+    start: f64,
+    end: f64,
+    dest: String,
+    format: String,
+) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || recorder::export(&src, start, end, &dest, &format))
         .await
         .map_err(|e| e.to_string())?
@@ -510,14 +645,33 @@ struct SettingsView {
     mic_gain: f32,
     sys_gain: f32,
     autostart: bool,
-    /// 截图默认保存目录：空 = 每次询问保存位置
-    save_dir: String,
+    /// 录屏时是否把鼠标指针画进画面
+    cursor_overlay: bool,
+    /// 是否在指针周围叠加蓝色光晕
+    cursor_glow: bool,
+    /// 运行日志路径（设置页「打开」按钮用）
     log_path: String,
+    /// FFmpeg 是否可用（设置页诊断用）
+    ffmpeg: FfmpegView,
+    save_dir: String,
     mic_gain_range: (f32, f32),
     sys_gain_range: (f32, f32),
     kill_hotkey_display: String,
     /// 字幕识别配置（含凭证与可用性判定，设置页用）
     subtitle: SubtitleView,
+}
+
+/// FFmpeg 状态的前端视图
+#[derive(Debug, Clone, serde::Serialize)]
+struct FfmpegView {
+    found: bool,
+    /// 解析到的路径（PATH 命中时为 "ffmpeg"）
+    program: String,
+    /// 来源：env / exe_dir / path / well_known
+    origin: String,
+    version: String,
+    /// 缺失时的安装建议
+    hint: String,
 }
 
 /// 字幕识别配置的前端视图
@@ -549,12 +703,15 @@ fn hotkey_display(hk: &str) -> String {
 
 fn settings_view() -> SettingsView {
     let s = settings::get();
+    let locate = ffmpeg::locate().cloned();
     SettingsView {
         hotkey_display: hotkey_display(&s.hotkey),
         hotkey: s.hotkey,
         mic_gain: s.mic_gain,
         sys_gain: s.sys_gain,
         autostart: s.autostart,
+        cursor_overlay: s.cursor_overlay,
+        cursor_glow: s.cursor_glow,
         save_dir: s.save_dir.clone().unwrap_or_default(),
         log_path: logger::path()
             .map(|p| p.to_string_lossy().into_owned())
@@ -562,6 +719,22 @@ fn settings_view() -> SettingsView {
         mic_gain_range: settings::MIC_GAIN_RANGE,
         sys_gain_range: settings::SYS_GAIN_RANGE,
         kill_hotkey_display: hotkey_display(settings::KILL_HOTKEY),
+        ffmpeg: FfmpegView {
+            found: locate.is_ok(),
+            program: locate
+                .as_ref()
+                .map(|l| l.program.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            origin: locate
+                .as_ref()
+                .map(|l| l.origin.as_str().to_string())
+                .unwrap_or_default(),
+            version: locate
+                .as_ref()
+                .map(|_| ffmpeg::version().unwrap_or_default())
+                .unwrap_or_default(),
+            hint: locate.err().unwrap_or_default(),
+        },
         subtitle: SubtitleView {
             enabled: s.subtitle.enabled,
             provider: s.subtitle.provider.clone(),
@@ -654,6 +827,20 @@ fn set_autostart(app: AppHandle, enabled: bool) -> Result<SettingsView, String> 
         Ok(())
     })?;
     crate::lclog!("开机自启已设为 {enabled}");
+    Ok(settings_view())
+}
+
+/// 设置指针可视化（录屏时是否画指针 / 是否叠加蓝色光晕）
+#[tauri::command]
+fn set_cursor_overlay(cursor: bool, glow: bool) -> Result<SettingsView, String> {
+    let effective_glow = cursor && glow;
+    settings::update(|s| {
+        s.cursor_overlay = cursor;
+        // 关掉指针时光晕没有意义，一并归零，避免下次打开指针时状态莫名打开
+        s.cursor_glow = effective_glow;
+        Ok(())
+    })?;
+    crate::lclog!("指针可视化已更新：指针={cursor} 光晕={effective_glow}");
     Ok(settings_view())
 }
 
@@ -819,6 +1006,7 @@ pub fn run() {
             set_audio_gains,
             set_autostart,
             set_save_dir,
+            set_cursor_overlay,
             set_subtitle_config,
             generate_subtitle,
             test_subtitle_connection,
@@ -836,9 +1024,8 @@ pub fn run() {
             // 日志尽早初始化：后续每一步关键流程与**原始错误详情**都会落到文件，
             // 用户复现一次即可事后精确定位（GUI 里只能看到笼统提示）。
             if let Ok(dir) = app.path().app_local_data_dir() {
-                // 日志放 D 盘（用户要求，且日志是排查依据不占系统盘）；设置仍留在系统数据目录，
-                // 换目录会让用户已配置的快捷键/增益凭空丢失。
-                logger::init(&logger::prefer_dir(Path::new(LOG_ROOT_ON_D), &dir));
+                // 日志可经 LIGHT_CAPTURE_LOG_DIR 改到别的盘；设置仍固定留在系统数据目录。
+                logger::init(&log_dir(&dir));
                 settings::init(&dir);
             }
             lclog!(
@@ -846,20 +1033,29 @@ pub fn run() {
                 logger::path(),
                 app.config().identifier
             );
+            // FFmpeg 只影响录制/导出/抽帧，不影响截图：缺失时只告警，不阻断启动。
+            match ffmpeg::locate() {
+                Ok(l) => lclog!("FFmpeg 可用：{:?}（来源 {}）", l.program, l.origin.as_str()),
+                Err(e) => lclog!("!! FFmpeg 不可用（录制功能将不可用）：{e}"),
+            }
 
             // 覆盖层窗口：全屏透明、无边框、置顶、不占任务栏，默认隐藏
-            WebviewWindowBuilder::new(app, OVERLAY_LABEL, WebviewUrl::App("index.html".into()))
-                .title("light-capture")
-                .fullscreen(true)
-                .transparent(true)
-                .decorations(false)
-                .always_on_top(true)
-                .skip_taskbar(true)
-                .visible(false)
-                .build()?;
+            let overlay =
+                WebviewWindowBuilder::new(app, OVERLAY_LABEL, WebviewUrl::App("index.html".into()))
+                    .title("light-capture")
+                    .fullscreen(true)
+                    .transparent(true)
+                    .decorations(false)
+                    .always_on_top(true)
+                    .skip_taskbar(true)
+                    .visible(false)
+                    .build()?;
 
             // 录制控制条窗口：独立小窗口，录制时全屏覆盖层隐藏，鼠标操作完全不受阻
-            WebviewWindowBuilder::new(
+            // shadow(false)：无边框透明窗口仍会被 Tauri 默认保留 DWM 窗口阴影，
+            // 在透明窗口上会渲染成贴着窗口的一圈"细框"，与控制条自身的 CSS 边框
+            // 叠成两层框。控制条的边框/阴影由 CSS 绘制（见 App.css .rec-bar），关掉系统阴影。
+            let recbar = WebviewWindowBuilder::new(
                 app,
                 RECBAR_LABEL,
                 WebviewUrl::App("index.html#recbar".into()),
@@ -868,26 +1064,35 @@ pub fn run() {
             .inner_size(380.0, 60.0)
             .transparent(true)
             .decorations(false)
+            .shadow(false)
             .always_on_top(true)
             .skip_taskbar(true)
             .resizable(false)
             .visible(false)
             .build()?;
 
-            // 清理上次运行遗留的录制临时文件（启动时不可能有进行中的录制）
-            if let Ok(dir) = app.path().app_local_data_dir().map(|d| d.join("recordings")) {
-                if let Ok(entries) = std::fs::read_dir(&dir) {
-                    for entry in entries.flatten() {
-                        let name = entry.file_name().to_string_lossy().into_owned();
-                        // 清理上次异常退出遗留的临时视频与音频文件
-                        let stale = (name.starts_with("tmp_") && name.ends_with(".mp4"))
-                            || (name.ends_with(".wav")
-                                && (name.starts_with("mic") || name.starts_with("sys")));
-                        if stale {
-                            let _ = std::fs::remove_file(entry.path());
-                        }
-                    }
-                }
+            // 采集排除：截图/录屏的画面里"看不见"这两个窗口（露出后面的桌面）。
+            // 覆盖层排除生效 → 截图全程不隐藏界面、不闪；控制条排除 → 录像里
+            // 永远不会烧进控制条。不支持的老系统自动回退隐藏+等合成的老路径。
+            OVERLAY_EXCLUDED.store(
+                exclude_from_capture(&overlay),
+                std::sync::atomic::Ordering::Relaxed,
+            );
+            let recbar_excluded = exclude_from_capture(&recbar);
+            lclog!(
+                "采集排除：覆盖层={} 控制条={}",
+                OVERLAY_EXCLUDED.load(std::sync::atomic::Ordering::Relaxed),
+                recbar_excluded
+            );
+
+            // 清理上次运行遗留的录制临时文件。只删 6 小时前的：
+            // GUI 与 CLI 可同时运行，另一个进程可能正在录制。
+            if let Ok(dir) = app
+                .path()
+                .app_local_data_dir()
+                .map(|d| d.join("recordings"))
+            {
+                recorder::cleanup_stale_temps(&dir, std::time::Duration::from_secs(6 * 3600));
             }
 
             // 系统托盘
@@ -954,10 +1159,7 @@ pub fn run() {
                     std::process::exit(0);
                 }
             }) {
-                lclog!(
-                    "!! 注册强杀快捷键 {} 失败：{e}",
-                    settings::KILL_HOTKEY
-                );
+                lclog!("!! 注册强杀快捷键 {} 失败：{e}", settings::KILL_HOTKEY);
             }
             #[cfg(windows)]
             spawn_kill_watchdog();
@@ -1012,7 +1214,10 @@ mod tests {
     #[test]
     fn normalizes_hotkey_variants() {
         assert_eq!(normalize_hotkey("Ctrl+Shift+Q").unwrap(), "ctrl+shift+q");
-        assert_eq!(normalize_hotkey("SHIFT + CTRL + q").unwrap(), "ctrl+shift+q");
+        assert_eq!(
+            normalize_hotkey("SHIFT + CTRL + q").unwrap(),
+            "ctrl+shift+q"
+        );
         assert_eq!(normalize_hotkey("Control+Alt+F7").unwrap(), "ctrl+alt+f7");
         assert_eq!(normalize_hotkey("Alt+P").unwrap(), "alt+p");
         assert!(normalize_hotkey("Ctrl+").is_err());

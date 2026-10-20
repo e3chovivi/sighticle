@@ -187,11 +187,12 @@ pub fn start_capture(dir: &Path, mic: bool, sys: bool) -> AudioReport {
         };
     }
     // 设备打开偶有延迟，给足 10 秒；超时则视为未启用（不阻断录像）
-    rx.recv_timeout(Duration::from_secs(10)).unwrap_or_else(|_| AudioReport {
-        mic: false,
-        sys: false,
-        warnings: vec!["音频启动超时".into()],
-    })
+    rx.recv_timeout(Duration::from_secs(10))
+        .unwrap_or_else(|_| AudioReport {
+            mic: false,
+            sys: false,
+            warnings: vec!["音频启动超时".into()],
+        })
 }
 
 /// 停止音频采集并返回落盘的音频文件路径（无会话时返回空）。
@@ -250,7 +251,9 @@ fn start(dir: &Path, want_mic: bool, want_sys: bool) -> StartOutcome {
 /// 采集到的 WAV 是否含有效音频数据（大于 RIFF 头 44 字节）。
 /// 作为混流前的安全网：文件缺失或写盘失败时不送去 FFmpeg。
 pub fn has_audio_data(path: &Path) -> bool {
-    std::fs::metadata(path).map(|m| m.len() > 44).unwrap_or(false)
+    std::fs::metadata(path)
+        .map(|m| m.len() > 44)
+        .unwrap_or(false)
 }
 
 /// 按墙钟把静音补齐到"此刻"，保证音频时间轴与真实录制时长一致。
@@ -384,11 +387,11 @@ fn start_track(
         // 只保留闭包里的那一份 sender：本块结束后 txc 已随 build 移入回调
         let txc = tx.clone();
         let built = match sample_format {
-            SampleFormat::F32 => build::<f32>(device, stream_config.clone(), txc),
-            SampleFormat::I16 => build::<i16>(device, stream_config.clone(), txc),
-            SampleFormat::I32 => build::<i32>(device, stream_config.clone(), txc),
-            SampleFormat::U16 => build::<u16>(device, stream_config.clone(), txc),
-            SampleFormat::U32 => build::<u32>(device, stream_config.clone(), txc),
+            SampleFormat::F32 => build::<f32>(device, stream_config, txc),
+            SampleFormat::I16 => build::<i16>(device, stream_config, txc),
+            SampleFormat::I32 => build::<i32>(device, stream_config, txc),
+            SampleFormat::U16 => build::<u16>(device, stream_config, txc),
+            SampleFormat::U32 => build::<u32>(device, stream_config, txc),
             other => Err(format!("不支持的采样格式 {other:?}")),
         };
         match built {
@@ -525,7 +528,10 @@ mod tests {
         let report = start_capture(&dir, true, true);
         let files = stop_capture();
         if files.is_empty() {
-            eprintln!("跳过 WAV 校验：本机无可用音频设备，告警={:?}", report.warnings);
+            eprintln!(
+                "跳过 WAV 校验：本机无可用音频设备，告警={:?}",
+                report.warnings
+            );
             return;
         }
         // 再跑一轮完整采集，确认专用线程可反复启停（COM 隔离的回归验证）
@@ -540,7 +546,12 @@ mod tests {
         );
         for f in &files2 {
             let bytes = std::fs::read(f).unwrap_or_else(|e| panic!("{} 未生成：{e}", f.display()));
-            assert!(bytes.len() > 44, "{} 仅 {} 字节，疑似空音频", f.display(), bytes.len());
+            assert!(
+                bytes.len() > 44,
+                "{} 仅 {} 字节，疑似空音频",
+                f.display(),
+                bytes.len()
+            );
             assert_eq!(&bytes[0..4], b"RIFF", "{} 缺少 RIFF 头", f.display());
             assert_eq!(&bytes[8..12], b"WAVE", "{} 缺少 WAVE 标识", f.display());
         }

@@ -1,0 +1,43 @@
+# cargo-deny 配置：依赖许可证与安全公告检查
+#
+# 本项目以 MIT 发布。目标不是"只允许 MIT"，而是：
+#   - 允许常见的宽松许可证组合（MIT / Apache-2.0 / BSD / ISC / Zlib / Unicode）
+#   - 放行 MPL-2.0（文件级 copyleft，不传染到本项目，且未修改这些依赖）
+#   - **拒绝** GPL / AGPL / SSPL 等会传染到本项目的强 copyleft
+#
+# 本地运行：cargo install cargo-deny && cargo deny --manifest-path src-tauri/Cargo.toml check
+
+[advisories]
+# 有已知漏洞即失败。修复方式：升级依赖；确无上游修复时才在此登记例外并写明理由。
+version = 2
+yanked = "deny"
+ignore = []
+
+[licenses]
+version = 2
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Zlib",
+  "Unicode-3.0",
+  "Unlicense",
+  "BSL-1.0",
+  "CDLA-Permissive-2.0",
+  "MPL-2.0",
+]
+confidence-threshold = 0.9
+
+[bans]
+# 同一 crate 多版本只告警（传递依赖里很难完全避免）
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+# 只允许 crates.io，禁止未知 registry 与 git 源——降低供应链风险
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

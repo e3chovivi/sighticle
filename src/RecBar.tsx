@@ -59,6 +59,13 @@ export default function RecBar() {
   // 字幕识别是否已启用（设置里填了凭证并打开开关）→ 编辑器里给出可感知的提示
   const [subEnabled, setSubEnabled] = createSignal(false);
   const [fallbackDur, setFallbackDur] = createSignal(0);
+  // 预览加载状态：无声/损坏的视频在 Chromium 里可能长时间黑屏，
+  // 必须把"加载中/失败"如实显示，否则用户会误以为预览没生效。
+  const [vidLoading, setVidLoading] = createSignal(false);
+  const [vidError, setVidError] = createSignal(false);
+  // 本次录制是否带音频（mic/sys 都关时输出无声视频，
+  // Chromium 的 <video controls> 会自动禁用音量滑块——提前说明避免误解）
+  const [hasAudio, setHasAudio] = createSignal(false);
   // 本次录制实际启用的音频轨道（由 rec-started 事件告知）
   const [micOn, setMicOn] = createSignal(false);
   const [sysOn, setSysOn] = createSignal(false);
@@ -142,6 +149,7 @@ export default function RecBar() {
     void listen<RecStartedPayload>("rec-started", (e) => {
       setMicOn(e.payload.mic);
       setSysOn(e.payload.sys_audio);
+      setHasAudio(!!(e.payload.mic || e.payload.sys_audio));
       setAudioWarn((e.payload.audio_warnings ?? []).join("；"));
       resetToRecording();
     })
@@ -170,6 +178,8 @@ export default function RecBar() {
       }
       setSrcPath(res.path);
       setFallbackDur(res.seconds);
+      setVidLoading(true);
+      setVidError(false);
       setPhase("editor");
       await layout("editor");
     } catch (err) {
@@ -353,19 +363,46 @@ export default function RecBar() {
       {/* ---------- 录后编辑器 ---------- */}
       <Show when={phase() === "editor" || phase() === "exporting"}>
         <div class="recbar-editor">
-          <video
-            ref={videoRef}
-            class="editor-video"
-            src={srcPath() ? convertFileSrc(srcPath()) : undefined}
-            controls
-            onLoadedMetadata={(e) => {
-              const d = e.currentTarget.duration;
-              const dur = Number.isFinite(d) && d > 0 ? d : fallbackDur();
-              setDuration(dur);
-              setSelStart(0);
-              setSelEnd(dur);
-            }}
-          />
+          <div class="vid-wrap">
+            <video
+              ref={videoRef}
+              class="editor-video"
+              src={srcPath() ? convertFileSrc(srcPath()) : undefined}
+              controls
+              onWaiting={() => setVidLoading(true)}
+              onPlaying={() => setVidLoading(false)}
+              onLoadedData={() => setVidLoading(false)}
+              onLoadedMetadata={(e) => {
+                setVidLoading(false);
+                const d = e.currentTarget.duration;
+                const dur = Number.isFinite(d) && d > 0 ? d : fallbackDur();
+                setDuration(dur);
+                setSelStart(0);
+                setSelEnd(dur);
+              }}
+              onError={() => {
+                setVidLoading(false);
+                setVidError(true);
+              }}
+            />
+            {/* 加载/失败覆盖层：无声或损坏的视频在 Chromium 里可能长时间黑屏，
+                没有这两层提示的话用户会以为"预览界面看不到视频" */}
+            <Show when={vidError()}>
+              <div class="vid-note bad">
+                预览加载失败：录制文件可能已损坏。
+                <br />
+                仍可尝试保存导出，若导出也失败请重新录制。
+              </div>
+            </Show>
+            <Show when={!vidError() && vidLoading() && duration() <= 0}>
+              <div class="vid-note">正在加载预览…</div>
+            </Show>
+          </div>
+          {/* 无音频说明：录制时麦克风与系统声音都没开 → 无声视频，
+              Chromium 会自动禁用音量滑块（属正常行为，提前告知避免误解） */}
+          <Show when={!hasAudio()}>
+            <div class="vid-hint">本次未录制音频（无声视频），预览没有声音、音量滑块不可用</div>
+          </Show>
           <div
             class="tl"
             ref={trackRef}

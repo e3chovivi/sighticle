@@ -1,6 +1,7 @@
 import { createEffect, createSignal, onCleanup, onMount, For, Show } from "solid-js";
 import type { JSX } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { save } from "@tauri-apps/plugin-dialog";
 import "./App.css";
 
@@ -174,18 +175,19 @@ export default function App() {
     }
   }
 
-  /// 找到包含该点的最小窗口（最上层）。
-  /// 跳过桌面/任务栏窗口：点这些"空白"区域应当退出，而不是把桌面当窗口选中。
+  /// 命中该点的最上层窗口。winRects 保持 Z 序（最上层在前，见后端 list_windows），
+  /// 因此取第一个包含该点的窗口就是用户视觉上看到的那个——比"最小面积"启发式准：
+  /// 重叠窗口不再误选被压在下面的小窗口，悬停高亮也不会在两个候选间来回跳。
+  /// 桌面/任务栏等"空白"窗口命中即视为不可选（单击这些区域应当退出），
+  /// 也不透传到它背后的窗口——用户看到的是空白层，选中背后窗口必然"捕获不准"。
   function hitWindow(x: number, y: number): WinRect | null {
     const BLANK_TITLES = ["Program Manager", "任务栏", "Taskbar", "Search"];
-    let best: WinRect | null = null;
     for (const w of winRects()) {
-      if (BLANK_TITLES.includes(w.title)) continue;
       if (x >= w.x && x <= w.x + w.width && y >= w.y && y <= w.y + w.height) {
-        if (!best || w.width * w.height < best.width * best.height) best = w;
+        return BLANK_TITLES.includes(w.title) ? null : w;
       }
     }
-    return best;
+    return null;
   }
 
   async function commitRegion(r: Region) {
@@ -254,31 +256,47 @@ export default function App() {
         "capture_region_screenshot",
         { region: { x: r.x, y: r.y, width: r.w, height: r.h } }
       );
+      // 先把底图解码好并画上画布，再切进标注界面并恢复覆盖层：
+      // 若先切界面再异步加载图片，会看到"空画布顿一下、图片随后弹出"的顿挫感。
+      const img = await loadImage(data.data_url);
+      baseImg = img;
+      // 离屏副本供马赛克采样（需读未叠加标注的原始像素）
+      const off = document.createElement("canvas");
+      off.width = img.width;
+      off.height = img.height;
+      off.getContext("2d")!.drawImage(img, 0, 0);
+      baseCanvas = off;
       setShot(data);
       setShapes([]);
       setRedoStack([]);
       setTool("rect");
       setStage("annotate");
-      // 后端为拍出干净画面已把覆盖层隐藏（否则会拍进紫色蒙版），这里切到标注界面后恢复显示
+      redraw();
+      // 不支持采集排除的系统上，后端为拍出干净画面已把覆盖层隐藏（否则会拍进紫色蒙版），
+      // 这里恢复显示；采集排除生效时覆盖层本就可见，这次调用是无副作用的空操作。
       await invoke("show_overlay");
-      // 加载底图，并建一份离屏副本供马赛克采样（需读未叠加标注的原始像素）
-      const img = new Image();
-      img.onload = () => {
-        baseImg = img;
-        const off = document.createElement("canvas");
-        off.width = img.width;
-        off.height = img.height;
-        off.getContext("2d")!.drawImage(img, 0, 0);
-        baseCanvas = off;
-        redraw();
-      };
-      img.src = data.data_url;
     } catch (err) {
-      // 后端为拍出干净画面会先隐藏覆盖层；失败时务必恢复界面，否则用户会面对"消失的界面"
+      // 后端为拍出干净画面可能先隐藏了覆盖层；失败时务必恢复界面，否则用户会面对"消失的界面"
       await invoke("show_overlay").catch(() => {});
       showToast(`截图失败：${err}`);
       resetToSelect();
     }
+  }
+
+  /// 解码截图底图：解码完成才返回，保证切进标注界面的同一帧画布上已有内容
+  function loadImage(src: string): Promise<HTMLImageElement> {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        // 显式解码：避免后面首次 drawImage 在主线程触发同步解码而掉帧
+        img.decode().then(
+          () => resolve(img),
+          () => resolve(img)
+        );
+      };
+      img.onerror = () => reject(new Error("截图解码失败"));
+      img.src = src;
+    });
   }
 
   function canvasScale() {
@@ -560,14 +578,24 @@ export default function App() {
 
   const preventContextMenu = (e: MouseEvent) => e.preventDefault();
 
+  let unlistenOverlayShown: (() => void) | null = null;
   onMount(() => {
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("contextmenu", preventContextMenu);
     void loadWindows(); // 唤起即框选，窗口识别直接开始
+    // 覆盖层每次显示都刷新窗口快照：应用启动时加载的那份会随时间失效
+    // （新开的窗口、挪过位置的窗口都不在里面），是"自动捕获不准"的主因。
+    void listen("overlay-shown", () => {
+      windowsLoaded = false;
+      void loadWindows();
+    }).then((un) => {
+      unlistenOverlayShown = un;
+    });
   });
   onCleanup(() => {
     window.removeEventListener("keydown", onKeyDown);
     window.removeEventListener("contextmenu", preventContextMenu);
+    unlistenOverlayShown?.();
   });
 
   const regionStyle = () => {

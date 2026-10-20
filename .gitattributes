@@ -1,0 +1,11 @@
+# 统一按 LF 入库，避免 Windows/Linux 协作时整文件因换行符产生噪声 diff
+* text=auto eol=lf
+
+# 二进制资源不做换行转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.icns binary
+*.mp4 binary
+*.gif binary

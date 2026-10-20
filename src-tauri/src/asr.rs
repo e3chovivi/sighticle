@@ -51,16 +51,16 @@ pub struct SubtitleOutcome {
 pub fn generate_subtitle(video: &str) -> Result<SubtitleOutcome, String> {
     let cfg = crate::settings::get().subtitle;
     if !cfg.usable() {
-        return Ok(SubtitleOutcome { srt: String::new(), embedded: false });
+        return Ok(SubtitleOutcome {
+            srt: String::new(),
+            embedded: false,
+        });
     }
     let video_path = Path::new(video);
     if !video_path.is_file() {
         return Err(format!("视频文件不存在：{video}"));
     }
-    crate::lclog!(
-        "字幕识别开始：provider={} 文件={video}",
-        cfg.provider
-    );
+    crate::lclog!("字幕识别开始：provider={} 文件={video}", cfg.provider);
 
     let audio = extract_audio(video_path)?;
     let cues = match cfg.provider.as_str() {
@@ -222,9 +222,7 @@ fn transcribe_doubao(audio: &[u8], cfg: &SubtitleCfg) -> Result<Vec<Cue>, String
             Ok(r) => r,
             Err(ureq::Error::Status(code, r)) => {
                 // 4xx/5xx：尽量取回服务端信息
-                let detail = r
-                    .into_string()
-                    .unwrap_or_else(|_| "(无响应体)".into());
+                let detail = r.into_string().unwrap_or_else(|_| "(无响应体)".into());
                 return Err(format!("豆包识别失败：HTTP {code} {detail}"));
             }
             Err(e) => return Err(format!("豆包请求失败：{e}")),
@@ -308,9 +306,7 @@ fn transcribe_qwen(audio: &[u8], cfg: &SubtitleCfg) -> Result<Vec<Cue>, String> 
     let task_id = v
         .pointer("/output/task_id")
         .and_then(Value::as_str)
-        .ok_or_else(|| {
-            format!("提交任务未返回 task_id：{}", truncate_for_log(&v))
-        })?
+        .ok_or_else(|| format!("提交任务未返回 task_id：{}", truncate_for_log(&v)))?
         .to_string();
     crate::lclog!("Qwen 任务已提交：{task_id}");
 
@@ -413,17 +409,17 @@ fn upload_audio(agent: &ureq::Agent, key: &str, audio: &[u8]) -> Result<String, 
         ("Signature".into(), get("signature")?),
         ("policy".into(), get("policy")?),
         ("x-oss-object-acl".into(), get("x_oss_object_acl")?),
-        ("x-oss-forbid-overwrite".into(), get("x_oss_forbid_overwrite")?),
+        (
+            "x-oss-forbid-overwrite".into(),
+            get("x_oss_forbid_overwrite")?,
+        ),
         ("key".into(), object_key.clone()),
         ("success_action_status".into(), "200".into()),
     ];
     let body = build_multipart(&form, &file_name, audio);
     let resp = agent
         .post(&upload_host)
-        .set(
-            "Content-Type",
-            "multipart/form-data; boundary=lightcapture",
-        )
+        .set("Content-Type", "multipart/form-data; boundary=lightcapture")
         .send_bytes(&body)
         .map_err(|e| map_qwen_err(e, "上传音频"))?;
     if resp.status() != 200 {
@@ -481,7 +477,12 @@ fn sentence_to_cues(s: &Value) -> Vec<Cue> {
     let words = s.get("words").and_then(Value::as_array);
     let begin = s.get("begin_time").and_then(Value::as_i64);
     let end = s.get("end_time").and_then(Value::as_i64);
-    let text = s.get("text").and_then(Value::as_str).unwrap_or("").trim().to_string();
+    let text = s
+        .get("text")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
 
     let timed: Vec<(i64, i64, &str, &str)> = words
         .map(|ws| {
@@ -501,7 +502,11 @@ fn sentence_to_cues(s: &Value) -> Vec<Cue> {
     // 无词级信息、词为空或有词缺时间戳 → 整句一条
     let whole = |text: String| -> Vec<Cue> {
         match (begin, end, text.is_empty()) {
-            (Some(b), Some(e), false) => vec![Cue { start_ms: b, end_ms: e, text }],
+            (Some(b), Some(e), false) => vec![Cue {
+                start_ms: b,
+                end_ms: e,
+                text,
+            }],
             _ => vec![],
         }
     };
@@ -530,14 +535,22 @@ fn sentence_to_cues(s: &Value) -> Vec<Cue> {
         if hard || (soft && n >= 5) || n >= 22 {
             let t = buf.trim().to_string();
             if !t.is_empty() {
-                cues.push(Cue { start_ms: seg_start, end_ms: seg_end, text: t });
+                cues.push(Cue {
+                    start_ms: seg_start,
+                    end_ms: seg_end,
+                    text: t,
+                });
             }
             buf.clear();
         }
     }
     let t = buf.trim().to_string();
     if !t.is_empty() {
-        cues.push(Cue { start_ms: seg_start, end_ms: seg_end, text: t });
+        cues.push(Cue {
+            start_ms: seg_start,
+            end_ms: seg_end,
+            text: t,
+        });
     }
     cues
 }
@@ -751,13 +764,24 @@ mod tests {
     #[test]
     fn build_srt_shape() {
         let cues = vec![
-            Cue { start_ms: 450, end_ms: 1530, text: "第一句。".into() },
-            Cue { start_ms: 1530, end_ms: 3000, text: "  第二句。 ".into() },
+            Cue {
+                start_ms: 450,
+                end_ms: 1530,
+                text: "第一句。".into(),
+            },
+            Cue {
+                start_ms: 1530,
+                end_ms: 3000,
+                text: "  第二句。 ".into(),
+            },
         ];
         let srt = build_srt(&cues);
         let expected = "1\n00:00:00,450 --> 00:00:01,530\n第一句。\n\n\
                         2\n00:00:01,530 --> 00:00:03,000\n第二句。\n\n";
-        assert_eq!(srt, expected, "SRT 格式：编号/时间轴/文本/空行，文本去首尾空白");
+        assert_eq!(
+            srt, expected,
+            "SRT 格式：编号/时间轴/文本/空行，文本去首尾空白"
+        );
     }
 
     #[test]
@@ -770,7 +794,10 @@ mod tests {
         assert!(joined.contains("FontName=Microsoft YaHei"), "中文字体");
         // 滤镜路径转义：反斜杠→正斜杠、冒号→\:，否则盘符被截断
         assert!(joined.contains("C\\:/tmp/sub.srt"), "路径转义：{joined}");
-        assert!(args.last().unwrap() == "C:\\v\\out.mp4", "输出落临时文件，替换原片由调用方处理");
+        assert!(
+            args.last().unwrap() == "C:\\v\\out.mp4",
+            "输出落临时文件，替换原片由调用方处理"
+        );
     }
 
     #[test]
@@ -797,7 +824,10 @@ mod tests {
         assert_eq!(cues[0].end_ms, 1530);
         assert_eq!(cues[0].text, "关闭透传。");
 
-        assert!(parse_doubao(&json!({"result": {}})).is_empty(), "无 utterances 返回空");
+        assert!(
+            parse_doubao(&json!({"result": {}})).is_empty(),
+            "无 utterances 返回空"
+        );
     }
 
     #[test]
@@ -851,7 +881,11 @@ mod tests {
         let cues = parse_qwen_sentences(&v);
         assert_eq!(cues.len(), 3, "一句长话按标点切成 3 条");
         assert_eq!(cues[0].text, "今天天气不错，");
-        assert_eq!((cues[0].start_ms, cues[0].end_ms), (1700, 2500), "时间戳=首末词发音时刻");
+        assert_eq!(
+            (cues[0].start_ms, cues[0].end_ms),
+            (1700, 2500),
+            "时间戳=首末词发音时刻"
+        );
         assert_eq!(cues[1].text, "我们出去走走吧。");
         assert_eq!((cues[1].start_ms, cues[1].end_ms), (2500, 3300));
         assert_eq!(cues[2].text, "好的马上。");

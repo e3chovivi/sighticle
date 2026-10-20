@@ -25,14 +25,27 @@ interface SubtitleView {
   creds_ready: boolean;
 }
 
+interface FfmpegView {
+  found: boolean;
+  program: string;
+  /** env | exe_dir | path | well_known */
+  origin: string;
+  version: string;
+  /** 缺失时的安装建议 */
+  hint: string;
+}
+
 interface SettingsView {
   hotkey: string;
   hotkey_display: string;
   mic_gain: number;
   sys_gain: number;
   autostart: boolean;
+  cursor_overlay: boolean;
+  cursor_glow: boolean;
   save_dir: string;
   log_path: string;
+  ffmpeg: FfmpegView;
   mic_gain_range: [number, number];
   sys_gain_range: [number, number];
   kill_hotkey_display: string;
@@ -40,6 +53,22 @@ interface SettingsView {
 }
 
 const MODIFIER_KEYS = ["Control", "Shift", "Alt", "Meta"];
+
+/// FFmpeg 来源的中文说明
+function originLabel(origin: string): string {
+  switch (origin) {
+    case "env":
+      return "环境变量 LIGHT_CAPTURE_FFMPEG";
+    case "exe_dir":
+      return "程序同目录";
+    case "path":
+      return "系统 PATH";
+    case "well_known":
+      return "常见安装位置";
+    default:
+      return origin || "未知";
+  }
+}
 
 export default function Settings() {
   const [view, setView] = createSignal<SettingsView | null>(null);
@@ -154,6 +183,38 @@ export default function Settings() {
       });
       setView(next);
       flash("音频增益已保存", null);
+    } catch (e) {
+      flash(null, String(e));
+    }
+  }
+
+  async function toggleCursorOverlay(enabled: boolean) {
+    const v0 = view();
+    if (!v0) return;
+    try {
+      setView(
+        await invoke<SettingsView>("set_cursor_overlay", {
+          cursor: enabled,
+          glow: enabled ? v0.cursor_glow : false,
+        }),
+      );
+      flash(enabled ? "录屏时将显示鼠标指针" : "录屏时不再显示鼠标指针", null);
+    } catch (e) {
+      flash(null, String(e));
+    }
+  }
+
+  async function toggleCursorGlow(enabled: boolean) {
+    const v0 = view();
+    if (!v0) return;
+    try {
+      setView(
+        await invoke<SettingsView>("set_cursor_overlay", {
+          cursor: v0.cursor_overlay,
+          glow: enabled,
+        }),
+      );
+      flash(enabled ? "已开启指针光晕" : "已关闭指针光晕", null);
     } catch (e) {
       flash(null, String(e));
     }
@@ -495,6 +556,48 @@ export default function Settings() {
               </Show>
             </section>
 
+            {/* ---------- 录屏指针 ---------- */}
+            <section class="settings-card">
+              <div class="settings-row settings-row-inline">
+                <div>
+                  <div class="settings-label">在录屏中显示鼠标指针</div>
+                  <div class="settings-hint">
+                    屏幕采集本身不含指针，开启后会把系统真实指针图标原样合成进画面，便于回看点击与拖拽。
+                  </div>
+                </div>
+                <button
+                  class="switch"
+                  classList={{ on: v().cursor_overlay }}
+                  role="switch"
+                  aria-checked={v().cursor_overlay}
+                  aria-label="显示鼠标指针"
+                  onClick={() => void toggleCursorOverlay(!v().cursor_overlay)}
+                >
+                  <span class="switch-knob" />
+                </button>
+              </div>
+              <div class="settings-row settings-row-inline">
+                <div>
+                  <div class="settings-label">指针轮廓微光</div>
+                  <div class="settings-hint">
+                    沿指针图标的实际轮廓向外发散蓝色微光（斜箭头是斜光晕、I 型光标是细长光晕），
+                    不改变指针本身的样子。
+                  </div>
+                </div>
+                <button
+                  class="switch"
+                  classList={{ on: v().cursor_overlay && v().cursor_glow }}
+                  disabled={!v().cursor_overlay}
+                  role="switch"
+                  aria-checked={v().cursor_glow}
+                  aria-label="指针轮廓微光"
+                  onClick={() => void toggleCursorGlow(!v().cursor_glow)}
+                >
+                  <span class="switch-knob" />
+                </button>
+              </div>
+            </section>
+
             {/* ---------- 启动与诊断 ---------- */}
             <section class="settings-card">
               <div class="settings-row settings-row-inline">
@@ -512,6 +615,24 @@ export default function Settings() {
                 >
                   <span class="switch-knob" />
                 </button>
+              </div>
+              <div class="settings-row settings-row-inline">
+                <div>
+                  <div class="settings-label">FFmpeg</div>
+                  <div class="settings-hint">
+                    {v().ffmpeg.found
+                      ? `${v().ffmpeg.version || "已找到"}（来源：${originLabel(v().ffmpeg.origin)}）`
+                      : "未找到：截图仍可用，但录制、导出、抽帧与场景检测不可用。"}
+                  </div>
+                  <Show when={!v().ffmpeg.found && v().ffmpeg.hint}>
+                    <div class="settings-hint" style={{ "white-space": "pre-line", "margin-top": "6px" }}>
+                      {v().ffmpeg.hint}
+                    </div>
+                  </Show>
+                  <Show when={v().ffmpeg.found && v().ffmpeg.program}>
+                    <div class="settings-hint">{v().ffmpeg.program}</div>
+                  </Show>
+                </div>
               </div>
               <div class="settings-row settings-row-inline">
                 <div>

@@ -14,6 +14,16 @@ edition = "2021"
 name = "light_capture_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+# 生产模式开关（Tauri 标准特性，DO NOT REMOVE）：
+# 启用后二进制按 frontendDist 加载打包进来的 dist/；
+# 关闭则按 devUrl 连本地 vite（localhost:1420）。
+# 设为默认，使直接 `cargo build/run` 也不会去连未启动的 vite（否则覆盖层
+# 会显示"无法访问此页面"错误页）。`pnpm tauri dev` 自带 --no-default-features
+# 关闭它，因此开发模式仍走 vite 热更新。
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -45,6 +55,15 @@ windows = { version = "0.61", features = [
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_Foundation",
     "Win32_System_Console",
+    # 采集排除（SetWindowDisplayAffinity，见 lib.rs::exclude_from_capture）
+    "Win32_UI_WindowsAndMessaging",
+    # 指针绘制（GetCursorInfo / DrawIconEx / DIB，见 cursor.rs）
+    "Win32_Graphics_Gdi",
+    # 合成等待（DwmFlush，见 lib.rs::wait_for_composition）
+    "Win32_Graphics_Dwm",
+    # 系统 build 号判定（RtlGetVersion + OSVERSIONINFOW，决定能否启用采集排除）
+    "Win32_System_SystemInformation",
+    "Wdk_System_SystemServices",
 ] }
 
 

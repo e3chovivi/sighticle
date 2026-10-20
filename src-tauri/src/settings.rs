@@ -58,6 +58,10 @@ pub struct Settings {
     pub sys_gain: f32,
     /// 是否开机自启
     pub autostart: bool,
+    /// 是否把鼠标指针画进录屏画面（xcap 默认不采集指针）
+    pub cursor_overlay: bool,
+    /// 是否在指针周围叠加蓝色光晕（指针更醒目，便于 AI 回看）
+    pub cursor_glow: bool,
     /// 截图默认保存目录：None = 每次询问保存位置
     pub save_dir: Option<String>,
     /// 字幕识别配置（没填凭证 = 功能不存在）
@@ -71,6 +75,8 @@ impl Default for Settings {
             mic_gain: 1.0,
             sys_gain: 1.0,
             autostart: false,
+            cursor_overlay: true,
+            cursor_glow: true,
             save_dir: None,
             subtitle: SubtitleCfg::default(),
         }
@@ -118,9 +124,36 @@ fn path() -> Option<&'static PathBuf> {
     PATH.get()
 }
 
+/// 旧版应用标识对应的设置文件。标识符从模板值改为正式值后，
+/// 老用户的快捷键/增益/凭证不该凭空丢失，首次启动时迁移一次。
+fn legacy_settings_path() -> Option<PathBuf> {
+    std::env::var("LOCALAPPDATA").ok().map(|v| {
+        PathBuf::from(v)
+            .join(crate::LEGACY_IDENTIFIER)
+            .join("settings.json")
+    })
+}
+
+/// 只有当 `dir` 确实是正式的应用数据目录时才做迁移。
+/// 测试与自定义目录（如临时目录）不应读到用户本机的真实配置。
+fn is_app_data_dir(dir: &Path) -> bool {
+    std::env::var("LOCALAPPDATA")
+        .ok()
+        .map(|v| PathBuf::from(v).join(crate::APP_IDENTIFIER) == dir)
+        .unwrap_or(false)
+}
+
 /// 从磁盘加载设置（不存在则用默认值）。应在启动早期调用一次。
 pub fn init(dir: &Path) {
+    let _ = std::fs::create_dir_all(dir);
     let p = dir.join("settings.json");
+    if !p.exists() && is_app_data_dir(dir) {
+        if let Some(legacy) = legacy_settings_path() {
+            if legacy.exists() {
+                let _ = std::fs::copy(&legacy, &p);
+            }
+        }
+    }
     let mut loaded = std::fs::read_to_string(&p)
         .ok()
         .and_then(|s| serde_json::from_str::<Settings>(&s).ok())
