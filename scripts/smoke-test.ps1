@@ -45,9 +45,12 @@ if ($null -ne $doc) {
     }
 } else {
     Add-Result "doctor 返回合法 JSON" $false "输出无法解析：$raw"
+    $results | Format-Table -AutoSize
+    Write-Host "`n程序没有返回可解析的 JSON，后续测试无意义，先排查这个。" -ForegroundColor Red
+    exit 3
 }
 
-if (-not $ff.found) {
+if (-not $ff -or -not $ff.found) {
     Write-Host "FFmpeg 不可用，跳过后续需要 FFmpeg 的测试。" -ForegroundColor Yellow
     $results | Format-Table -AutoSize
     exit 2
