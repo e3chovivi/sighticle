@@ -453,6 +453,21 @@ mod tests {
         dir
     }
 
+    /// 所有会触碰音频设备的测试串行执行。
+    ///
+    /// 采集线程是**进程级单例**（`AUDIO_TX`），同一时刻只能有一个会话。`cargo test`
+    /// 默认并行跑测试，两个测试同时 start/stop 会互相把对方的会话收掉，表现为
+    /// 「轨道数对不上」这类随机失败。设备是独占资源，这里显式串行比放宽断言更诚实。
+    fn audio_test_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// 启动报告里成功启用的轨道数
+    fn enabled_tracks(report: &AudioReport) -> usize {
+        report.mic as usize + report.sys as usize
+    }
+
     /// 结构性回归：音频采集必须发生在**独立线程**上，而不是调用线程。
     ///
     /// 这是「第二次录屏报参数错误」修复的核心约束：cpal/WASAPI 与 xcap/WGC 共用 COM，
@@ -461,6 +476,7 @@ mod tests {
     /// 一旦有人这么「优化」，本测试会立刻失败。
     #[test]
     fn audio_capture_is_isolated_on_its_own_thread() {
+        let _guard = audio_test_lock();
         let dir = fresh_dir("lc-audio-isolation");
         let caller = std::thread::current().id();
         let _ = start_capture(&dir, false, true);
@@ -485,6 +501,7 @@ mod tests {
     /// 请求采集但设备缺失时：不得 panic，且**不允许静默失败**——未启用必须给告警
     #[test]
     fn start_degrades_gracefully_without_devices() {
+        let _guard = audio_test_lock();
         let dir = fresh_dir("lc-audio-degrade");
         let o = start(&dir, true, true);
         assert!(
@@ -520,14 +537,20 @@ mod tests {
         assert!(has_audio_data(&path), "补齐后应被视为有效音频轨");
     }
 
-    /// 端到端（走专用线程 API）：启动 → 采集 0.7 秒 → 停止，验证 WAV 落盘且格式合法。
+    /// 端到端（走专用线程 API）：启动 → 采集 → 停止，验证 WAV 落盘且格式合法。
     /// 无可用设备时跳过（本机开发机通常有设备，属有效验证）。
+    ///
+    /// 断言用「报告里成功启用的轨道数」而不是文件数：设备可能被其它程序占用、
+    /// 采集也可能在极短时间内不产生数据而被判定为空轨。真正要回归的是
+    /// **专用线程能反复启停、每轮启用结果一致**，而不是文件数量碰巧相等。
     #[test]
     fn capture_over_dedicated_thread_writes_valid_wav() {
+        let _guard = audio_test_lock();
         let dir = fresh_dir("lc-audio-thread");
         let report = start_capture(&dir, true, true);
-        let files = stop_capture();
-        if files.is_empty() {
+        std::thread::sleep(Duration::from_millis(400));
+        let _ = stop_capture();
+        if enabled_tracks(&report) == 0 {
             eprintln!(
                 "跳过 WAV 校验：本机无可用音频设备，告警={:?}",
                 report.warnings
@@ -539,9 +562,16 @@ mod tests {
         std::thread::sleep(Duration::from_millis(700));
         let files2 = stop_capture();
         assert_eq!(
-            files2.len(),
-            files.len(),
-            "第二次采集的轨道数应与第一次一致（report={:?}）",
+            enabled_tracks(&report2),
+            enabled_tracks(&report),
+            "第二次采集成功启用的轨道数应与第一次一致（report1={:?} report2={:?}）",
+            report,
+            report2
+        );
+        assert!(
+            !files2.is_empty(),
+            "第二次采集成功启用 {} 路却没有任何音频文件（report={:?}）",
+            enabled_tracks(&report2),
             report2
         );
         for f in &files2 {
