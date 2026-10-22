@@ -1,4 +1,4 @@
-# light-capture 冒烟测试（Windows / PowerShell）
+# sightreel 冒烟测试（Windows / PowerShell）
 #
 # 用法（在仓库根目录执行）：
 #   powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\smoke-test.ps1
@@ -8,12 +8,12 @@
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
-$exe = Join-Path $root "src-tauri\target\release\light-capture.exe"
+$exe = Join-Path $root "src-tauri\target\release\sightreel.exe"
 
 if (-not (Test-Path $exe)) {
-    $debug = Join-Path $root "src-tauri\target\debug\light-capture.exe"
+    $debug = Join-Path $root "src-tauri\target\debug\sightreel.exe"
     if (Test-Path $debug) { $exe = $debug } else {
-        Write-Host "[FAIL] 找不到 light-capture.exe，请先构建：" -ForegroundColor Red
+        Write-Host "[FAIL] 找不到 sightreel.exe，请先构建：" -ForegroundColor Red
         Write-Host "       cd src-tauri; cargo build --release"
         exit 1
     }
@@ -112,6 +112,6 @@ if ($failed -eq 0) {
     exit 0
 } else {
     Write-Host "有 $failed 项失败，请把上面的 FAIL 行连同日志一起发我。" -ForegroundColor Red
-    Write-Host "日志: $env:LOCALAPPDATA\io.github.e3chovivi.light-capture\logs\light-capture.log"
+    Write-Host "日志: $env:LOCALAPPDATA\io.github.echovivi.sightreel\logs\sightreel.log"
     exit 1
 }

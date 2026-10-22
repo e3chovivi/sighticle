@@ -3,6 +3,11 @@ dist
 
 # 构建产物
 src-tauri/target/
+*-setup.exe
+*.msi
+
+# 随安装包分发的第三方二进制（体积大，不入库；打包前由脚本/手动放入）
+vendor/ffmpeg.exe
 
 # 机密/个人隐私文档（严禁提交）
 GitHub账号管理.md

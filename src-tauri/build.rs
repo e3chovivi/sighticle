@@ -37,7 +37,7 @@ fn ensure_frontend_dist() {
     if std::fs::create_dir_all(&dist).is_ok() {
         let _ = std::fs::write(
             index,
-            "<!doctype html><html><head><meta charset=\"utf-8\"><title>light-capture</title></head>\
+            "<!doctype html><html><head><meta charset=\"utf-8\"><title>sightreel</title></head>\
              <body><p>前端资源尚未构建。请运行 <code>pnpm install &amp;&amp; pnpm build</code>。</p></body></html>",
         );
         println!(

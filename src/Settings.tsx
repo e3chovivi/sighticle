@@ -58,7 +58,7 @@ const MODIFIER_KEYS = ["Control", "Shift", "Alt", "Meta"];
 function originLabel(origin: string): string {
   switch (origin) {
     case "env":
-      return "环境变量 LIGHT_CAPTURE_FFMPEG";
+      return "环境变量 SIGHTREEL_FFMPEG";
     case "exe_dir":
       return "程序同目录";
     case "path":
@@ -319,7 +319,7 @@ export default function Settings() {
   return (
     <div class="settings-page">
       <div class="settings-head">
-        <div class="settings-title">light-capture 设置</div>
+        <div class="settings-title">sightreel 设置</div>
         <button class="settings-close" onClick={() => void getCurrentWindow().close()}>
           关闭
         </button>

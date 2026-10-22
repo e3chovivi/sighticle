@@ -1,12 +1,16 @@
 //! FFmpeg 定位与自检。
 //!
-//! 设计取舍：**不打包 FFmpeg**。把它塞进安装包会让体积从几十 MB 涨到上百 MB，
-//! 与「轻量化」的定位冲突；而且带 x264 的 FFmpeg 是 GPL-2.0，随安装包分发会引入
-//! 额外的许可证义务。所以这里做的是「可靠的定位 + 说得清的错误」，而不是内置。
+//! 关于分发：官方安装包**内置** FFmpeg（tauri.conf.json 把 vendor/ffmpeg.exe 打进
+//! resources/），对用户开箱即用。FFmpeg（gyan.dev 基本构建，启用 x264）按 GPLv3
+//! 分发，但它是作为独立可执行文件随包提供，不传染本项目源码——我们的许可证仍是
+//! MIT，法律说明见 README「许可与第三方」一节。
+//!
+//! 内置不是唯一来源，这里仍要做「可靠的定位 + 说得清的错误」：
 //!
 //! 查找顺序：
-//!   1. 环境变量 `LIGHT_CAPTURE_FFMPEG`（指向 exe 或含 ffmpeg.exe 的目录）
-//!   2. 程序自身所在目录（便携版常见做法：ffmpeg.exe 与主程序放一起）
+//!   1. 环境变量 `SIGHTREEL_FFMPEG`（指向 exe 或含 ffmpeg.exe 的目录）
+//!   2. 程序自身所在目录（便携版常见做法：ffmpeg.exe 与主程序放一起；
+//!      安装包内置副本位于主程序同目录的 resources/ 下）
 //!   3. 系统 PATH
 //!   4. 常见包管理器安装位置（winget / scoop / chocolatey / 手工解压）
 //!
@@ -18,7 +22,7 @@ use std::process::Command;
 use std::sync::OnceLock;
 
 /// 环境变量：显式指定 ffmpeg 路径
-pub const ENV_OVERRIDE: &str = "LIGHT_CAPTURE_FFMPEG";
+pub const ENV_OVERRIDE: &str = "SIGHTREEL_FFMPEG";
 
 /// ffmpeg 的来源，用于诊断输出
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -52,14 +56,20 @@ pub struct Located {
     pub origin: Origin,
 }
 
-static LOCATED: OnceLock<Result<Located, String>> = OnceLock::new();
+static LOCATED: OnceLock<Located> = OnceLock::new();
 
-/// 取 ffmpeg 路径（带缓存）。找不到时返回可直接展示给用户的错误。
+/// 取 ffmpeg 路径（成功结果带缓存）。找不到时返回可直接展示给用户的错误。
+///
+/// **只缓存成功、不缓存失败**：启动那一刻可能因子进程创建被安全软件拦截、
+/// 磁盘/路径瞬时不可用等原因探测失败；若把失败也缓存，整个进程生命周期内
+/// 录制都会提示“缺少 FFmpeg”，只能重启应用才能恢复（实测出现过）。
+/// 失败结果不缓存，下一次录屏会重新探测。
 pub fn locate() -> Result<&'static Located, String> {
-    LOCATED
-        .get_or_init(do_locate)
-        .as_ref()
-        .map_err(|e| e.clone())
+    if let Some(l) = LOCATED.get() {
+        return Ok(l);
+    }
+    let located = do_locate()?;
+    Ok(LOCATED.get_or_init(|| located))
 }
 
 /// 供测试与诊断使用：不读缓存，重新探测一次。
@@ -99,12 +109,21 @@ fn do_locate() -> Result<Located, String> {
         }
     }
 
-    // 2. 主程序同目录（便携版）
+    // 2. 主程序同目录（便携版 / 安装包把 ffmpeg 随包分发时的落点）
     if let Some(dir) = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(Path::to_path_buf))
     {
+        // 2a. 与主程序并排
         let p = dir.join(exe_name());
+        if p.is_file() && is_usable(&p) {
+            return Ok(Located {
+                program: p,
+                origin: Origin::ExeDir,
+            });
+        }
+        // 2b. 安装包资源目录（Tauri resources 的默认落点）
+        let p = dir.join("resources").join(exe_name());
         if p.is_file() && is_usable(&p) {
             return Ok(Located {
                 program: p,
@@ -114,9 +133,9 @@ fn do_locate() -> Result<Located, String> {
     }
 
     // 3. PATH
-    if which(exe_name()) {
+    if let Some(p) = which(exe_name()) {
         return Ok(Located {
-            program: PathBuf::from("ffmpeg"),
+            program: p,
             origin: Origin::Path,
         });
     }
@@ -134,29 +153,27 @@ fn do_locate() -> Result<Located, String> {
     Err(missing_message())
 }
 
-/// 路径上确实有个文件还不够：必须真的能跑起来、且是 ffmpeg。
-/// 否则一个被占用/损坏/同名别的程序会让后续录制以莫名其妙的方式失败。
+/// 判断路径上的文件是否像一个可用的 ffmpeg。
+///
+/// **刻意不再试跑 `ffmpeg -version` 作为判据**：GUI 进程在部分 Windows 环境下
+/// 创建子进程会间歇性失败（实测：同一时刻 CLI 进程正常、GUI 内返回
+/// `ERROR_NOT_SUPPORTED(50)`）。把一次创建进程的抖动误判成「没装 FFmpeg」，
+/// 会让界面上出现误导性的「缺少 FFmpeg」，而实际文件就在那里、录制也能跑起来。
+/// 这里只做「存在 + 体积合理」的静态检查，真正能否运行由录制时的启动错误如实上报。
 fn is_usable(path: &Path) -> bool {
-    Command::new(path)
-        .arg("-version")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
+    std::fs::metadata(path)
+        .map(|m| m.is_file() && m.len() > 100 * 1024)
         .unwrap_or(false)
 }
 
-/// 用 `ffmpeg -version` 探测 PATH 中是否可用。
-/// 不自己解析 PATH 字符串：Windows 的 PATH 分隔符、注册表展开、App Execution Aliases
-/// 都可能和直觉不同，交给系统查找最可靠。
-fn which(name: &str) -> bool {
-    Command::new(name)
-        .arg("-version")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+/// 在 PATH 中查找可执行文件（返回完整路径，避免录制时再让系统解析一次）。
+///
+/// 只做文件系统查找、不创建进程：原因同上——探测阶段不应依赖 CreateProcess 的可用性。
+fn which(name: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|dir| dir.join(name))
+        .find(|p| is_usable(p))
 }
 
 /// 常见包管理器与手工安装位置
@@ -211,13 +228,32 @@ fn missing_message() -> String {
          \x20 scoop install ffmpeg\n\
          或下载后把 ffmpeg.exe 放到主程序同目录，\n\
          也可用环境变量 {ENV_OVERRIDE} 指向它。\n\
-         装好后执行 `light-capture doctor` 复核。"
+         装好后执行 `sightreel doctor` 复核。"
     )
 }
 
-/// 构造一个指向已定位 ffmpeg 的 Command
+/// 构造一个指向已定位 ffmpeg 的 Command。
+///
+/// **stdin 必须显式置 `Stdio::null()`**：默认的 `inherit` 会把父进程的 stdin 句柄
+/// 传给子进程，而 GUI 进程启动即 `FreeConsole()`，stdin 是悬空句柄，Windows 拒绝
+/// 用它创建子进程——实测稳定复现 `ERROR_NOT_SUPPORTED(50)`（“不支持该请求”），
+/// 表现为录屏后混流/导出失败、提示缺少 FFmpeg；命令行模式有真控制台所以不受影响。
+/// 需要管道的调用方（如录制编码器）在本函数之后再 `.stdin(Stdio::piped())` 覆盖。
+///
+/// Windows 上统一带 `CREATE_NO_WINDOW`：不给子进程分配控制台窗口（不闪窗）。
 pub fn command() -> Result<Command, String> {
-    Ok(Command::new(&locate()?.program))
+    let mut cmd = Command::new(&locate()?.program);
+    cmd.stdin(std::process::Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        // 必须保留 CREATE_UNICODE_ENVIRONMENT：creation_flags 会**覆盖** Rust 的默认标志，
+        // 只写 CREATE_NO_WINDOW 会让环境块按 ANSI 传递，中文路径/变量场景下可能出问题。
+        const CREATE_UNICODE_ENVIRONMENT: u32 = 0x0000_0400;
+        cmd.creation_flags(CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT);
+    }
+    Ok(cmd)
 }
 
 /// 读取版本号（`ffmpeg -version` 第一行）

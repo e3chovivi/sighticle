@@ -539,27 +539,55 @@ pub fn build_mux_args(video: &str, audios: &[(String, f32)], out: &str) -> Vec<S
         "aac".into(),
         "-b:a".into(),
         "192k".into(),
+        // moov 必须前置：FFmpeg 默认把索引写在文件尾，而预览走 WebView2 的 asset
+        // 协议，解析不了尾部索引时编辑器会显示「无法播放媒体」。录制与导出的
+        // 其它分支都已加这个参数，混流这里原先漏了。
+        "-movflags".into(),
+        "+faststart".into(),
     ]);
     args.push(out.to_string());
     args
 }
 
-/// 同步执行一次 FFmpeg，带超时兜底（超时即强杀，绝不让界面卡死）
+/// 同步执行一次 FFmpeg，带超时兜底（超时即强杀，绝不让界面卡死）。
+///
+/// stderr 必须捕获下来：FFmpeg 失败的原因只有它自己说得清（编码器不可用、输入
+/// 流不匹配、磁盘写满……），只报一句"处理失败"等于把排查成本转嫁给用户。
+/// 跨线程读管道同时避免管道写满把子进程卡死。
 pub(crate) fn run_ffmpeg(args: &[String], timeout: Duration) -> Result<(), String> {
     let mut child = crate::ffmpeg::command()?
         .args(args)
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| e.to_string())?;
+    let mut err_pipe = child.stderr.take();
+    let err_reader = std::thread::spawn(move || {
+        let mut buf = String::new();
+        if let Some(p) = err_pipe.as_mut() {
+            let _ = std::io::Read::read_to_string(p, &mut buf);
+        }
+        buf
+    });
     let deadline = Instant::now() + timeout;
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
+                let stderr = err_reader.join().unwrap_or_default();
                 return if status.success() {
                     Ok(())
                 } else {
-                    Err("FFmpeg 处理失败".into())
+                    // 取尾部：FFmpeg 的真正错误总在最后几行，前面是输入文件信息
+                    let tail: String = stderr
+                        .trim()
+                        .chars()
+                        .rev()
+                        .take(600)
+                        .collect::<String>()
+                        .chars()
+                        .rev()
+                        .collect();
+                    Err(format!("FFmpeg 处理失败（{}）：{tail}", status.code().unwrap_or(-1)))
                 };
             }
             Ok(None) => {
@@ -806,7 +834,7 @@ fn do_start(
         enc.crf
     );
 
-    // FFmpeg 可用性检查（不打包，见 ffmpeg.rs 的设计说明）。
+    // FFmpeg 可用性检查（查找顺序见 ffmpeg.rs；安装包内置，此处兜底外部来源）。
     // 提前失败并给出可复制的安装命令，比录到一半才报错有用得多。
     if let Err(e) = crate::ffmpeg::locate() {
         crate::lclog!("FFmpeg 不可用：{e}");

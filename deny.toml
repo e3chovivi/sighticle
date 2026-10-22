@@ -5,6 +5,9 @@
 #   - 放行 MPL-2.0（文件级 copyleft，不传染到本项目，且未修改这些依赖）
 #   - **拒绝** GPL / AGPL / SSPL 等会传染到本项目的强 copyleft
 #
+# 注意：安装包内置的 vendor/ffmpeg.exe 是独立可执行文件（GPLv3 build），
+# 不由本文件的 Rust 依赖许可证规则检查；关于它的分发说明见 README。
+#
 # 本地运行：cargo install cargo-deny && cargo deny --manifest-path src-tauri/Cargo.toml check
 
 [advisories]

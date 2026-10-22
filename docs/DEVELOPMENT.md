@@ -13,7 +13,7 @@
 
 ## 构建与运行
 
-前置：Windows 10+、pnpm、Rust、FFmpeg（截图不需要 FFmpeg，录制/导出/抽帧需要）。
+前置：Windows 10+、pnpm、Rust、FFmpeg（截图不需要 FFmpeg，录制/导出/抽帧需要；从源码运行时把 `ffmpeg.exe` 放到 `vendor/` 或系统 PATH，安装包则已内置）。
 
 ```powershell
 pnpm install
@@ -32,7 +32,7 @@ cd src-tauri
 cargo build --release
 ```
 
-可执行文件：`src-tauri\target\release\light-capture.exe`
+可执行文件：`src-tauri\target\release\sightreel.exe`
 
 冒烟测试：
 
@@ -48,7 +48,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\smoke-test.ps1
 | `src-tauri/src/recorder.rs` | 录屏/截图管线：xcap WGC 抓帧 → 裁剪 → FFmpeg 编码 |
 | `src-tauri/src/cursor.rs` | 指针合成：GDI 取真实指针图标 + 沿轮廓生成蓝色微光 |
 | `src-tauri/src/frames.rs` | 视频分析：探测、场景检测、抽帧、拼图 |
-| `src-tauri/src/ffmpeg.rs` | FFmpeg 定位器与 `doctor` 自检（**不打包 FFmpeg**） |
+| `src-tauri/src/ffmpeg.rs` | FFmpeg 定位器与 `doctor` 自检（安装包内置，二进制不入 git） |
 | `src-tauri/src/audio.rs` | WASAPI 麦克风/系统声音采集（运行在独立线程） |
 | `src-tauri/src/lib.rs` | GUI：窗口/托盘/快捷键/设置命令 |
 | `src/Settings.tsx` | 设置页 |
@@ -106,16 +106,18 @@ xcap 内部固定 `SetIsCursorCaptureEnabled(false)`，所以我们自己把指�
 
 ## 关于 FFmpeg
 
-**项目刻意不打包 FFmpeg**，原因：
+**安装包内置 FFmpeg，这是有意设计**——用户装完就能用，不该还要自己去找
+FFmpeg。`tauri.conf.json` 的 `bundle.resources` 会把 `vendor/ffmpeg.exe`
+写入安装包的 `resources/` 目录。
 
-- 体积：最小构建 25~40MB，完整版 80~150MB，与轻量定位冲突。
-- 许可证：带 x264 的 FFmpeg 是 GPL-2.0，随安装包分发会引入额外义务。
-- 维护：安全更新需要重新打包发版。
+**但二进制不入 git**：`.gitignore` 忽略 `vendor/ffmpeg.exe`。两个原因：
+仓库保持干净轻量；且带 x264 的 FFmpeg 是 GPLv3 构建，我们自己写的代码是
+MIT，两者作为独立实体共存（用户拿到的包里有 FFmpeg 的 GPL 提供义务，
+但不传染我们的源码——法律说明见 README「许可与第三方」一节）。
 
-替代方案是可靠的定位 + 清晰报错，见 `ffmpeg.rs`。查找顺序：
-环境变量 `LIGHT_CAPTURE_FFMPEG` → 程序同目录 → PATH → 常见包管理器位置。
-
-**不要**把 `ffmpeg.exe` 提交进仓库或打进安装包。
+从源码打包前，先把 `ffmpeg.exe` 放到 `vendor/`。运行时的查找顺序
+（内置副本找不到时的兜底）见 `ffmpeg.rs`：
+环境变量 `SIGHTREEL_FFMPEG` → 程序同目录（含 resources/）→ PATH → 常见包管理器位置。
 
 ## 隐私边界
 
