@@ -1,5 +1,5 @@
 {
-  "name": "sightreel",
+  "name": "sighticle",
   "version": "0.1.0",
   "description": "轻量级截图 / 录屏工具（无账号、无云上传、支持 AI Agent CLI 调用）",
   "type": "module",

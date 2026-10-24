@@ -1,4 +1,4 @@
-//! 极简文件日志：把关键流程与**原始错误详情**落到 `<数据目录>/logs/sightreel.log`
+//! 极简文件日志：把关键流程与**原始错误详情**落到 `<数据目录>/logs/sighticle.log`
 //!
 //! 为什么需要它：屏幕采集（WGC）与音频采集（WASAPI）的失败往往带 HRESULT 码，
 //! 而 GUI 里只能弹一句笼统的提示。把每次尝试的原始错误、耗时、上下文写进文件后，
@@ -33,11 +33,11 @@ pub fn init(dir: &Path) {
     if fs::create_dir_all(&logs_dir).is_err() {
         return;
     }
-    let path = logs_dir.join("sightreel.log");
+    let path = logs_dir.join("sighticle.log");
     // 简单的按大小轮转：超过上限就改名为 .1（覆盖旧的一份）
     if let Ok(meta) = fs::metadata(&path) {
         if meta.len() > MAX_LOG_BYTES {
-            let _ = fs::rename(&path, logs_dir.join("sightreel.log.1"));
+            let _ = fs::rename(&path, logs_dir.join("sighticle.log.1"));
         }
     }
     match OpenOptions::new().create(true).append(true).open(&path) {
@@ -45,7 +45,7 @@ pub fn init(dir: &Path) {
             let _ = LOG_FILE.set(Mutex::new(f));
             let _ = LOG_PATH.set(path.clone());
             log(&format!(
-                "===== sightreel v{} 启动，日志文件：{} =====",
+                "===== sighticle v{} 启动，日志文件：{} =====",
                 env!("CARGO_PKG_VERSION"),
                 path.display()
             ));
@@ -64,7 +64,7 @@ pub fn path() -> Option<PathBuf> {
 
 /// 目录选择策略：优先用 `preferred`（能创建或已存在就采用），否则回退到 `fallback`。
 ///
-/// 用途：用户可能通过 `SIGHTREEL_LOG_DIR` 把日志改到别的盘（别占系统盘），
+/// 用途：用户可能通过 `SIGHTICLE_LOG_DIR` 把日志改到别的盘（别占系统盘），
 /// 但目标盘不存在或不可写时不能因此丢掉日志能力，所以拿不到首选目录时必须静默回退。
 pub fn prefer_dir(preferred: &Path, fallback: &Path) -> PathBuf {
     if fs::create_dir_all(preferred).is_ok() {

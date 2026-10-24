@@ -436,7 +436,7 @@ where
                 let buf: Vec<i16> = data.iter().map(|s| (*s).to_sample::<i16>()).collect();
                 let _ = tx.send(buf);
             },
-            |err| eprintln!("[sightreel] 音频流错误: {err}"),
+            |err| eprintln!("[sighticle] 音频流错误: {err}"),
             None,
         )
         .map_err(|e| format!("打开音频设备失败：{e}"))

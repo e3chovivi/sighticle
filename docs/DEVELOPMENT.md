@@ -32,7 +32,7 @@ cd src-tauri
 cargo build --release
 ```
 
-可执行文件：`src-tauri\target\release\sightreel.exe`
+可执行文件：`src-tauri\target\release\sighticle.exe`
 
 冒烟测试：
 
@@ -117,7 +117,7 @@ MIT，两者作为独立实体共存（用户拿到的包里有 FFmpeg 的 GPL �
 
 从源码打包前，先把 `ffmpeg.exe` 放到 `vendor/`。运行时的查找顺序
 （内置副本找不到时的兜底）见 `ffmpeg.rs`：
-环境变量 `SIGHTREEL_FFMPEG` → 程序同目录（含 resources/）→ PATH → 常见包管理器位置。
+环境变量 `SIGHTICLE_FFMPEG` → 程序同目录（含 resources/）→ PATH → 常见包管理器位置。
 
 ## 隐私边界
 

@@ -1,12 +1,12 @@
 //! CLI 无头模式：给脚本 / AI 编排调用的截图与录屏入口。
 //!
-//! 用法（详见 `sightreel help`；机器可读能力声明 `sightreel help --json`）：
-//!   sightreel screenshot --out shot.png [--region x,y,w,h]
-//!   sightreel record --seconds 10 --out demo.mp4 [--region x,y,w,h] [--mic] [--sys-audio]
-//!   sightreel record --camera --seconds 5 --out cam.mp4 [--mic]
-//!   sightreel record --window "<标题>" --out demo.mp4 [--fps 15] [--scale 1280]
-//!   sightreel record --stop-file stop.flag --out demo.mp4   # 随时停止（创建文件即停）
-//!   sightreel list-windows --json          # 列出可见窗口，供 Agent 挑选录制目标
+//! 用法（详见 `sighticle help`；机器可读能力声明 `sighticle help --json`）：
+//!   sighticle screenshot --out shot.png [--region x,y,w,h]
+//!   sighticle record --seconds 10 --out demo.mp4 [--region x,y,w,h] [--mic] [--sys-audio]
+//!   sighticle record --camera --seconds 5 --out cam.mp4 [--mic]
+//!   sighticle record --window "<标题>" --out demo.mp4 [--fps 15] [--scale 1280]
+//!   sighticle record --stop-file stop.flag --out demo.mp4   # 随时停止（创建文件即停）
+//!   sighticle list-windows --json          # 列出可见窗口，供 Agent 挑选录制目标
 //!
 //! 约定：
 //! - stdout 只输出一行 JSON（机器可读），详细过程照常写本地日志文件；
@@ -28,17 +28,17 @@ use crate::{logger, recorder, settings};
 const APP_DATA_SUBDIR: &str = crate::APP_IDENTIFIER;
 
 const USAGE: &str = "\
-sightreel CLI（无头模式，供脚本 / AI 调用）
+sighticle CLI（无头模式，供脚本 / AI 调用）
 
 用法：
-  sightreel screenshot --out <path.png> [--region x,y,w,h]
-  sightreel record --seconds <n> --out <path.mp4|.gif> [--region x,y,w,h] [--window <title>] [--mic] [--sys-audio] [--fps <n>] [--scale <w>] [--crf <n>] [--stop-file <path>]
-  sightreel record --camera --seconds <n> --out <path.mp4|.gif> [--mic] [--sys-audio]
-  sightreel analyze --in <video.mp4> [--frames <n>] [--sheet <path>] [--no-scenes]
-  sightreel doctor        环境自检：FFmpeg 是否可用、版本、路径、安装建议
-  sightreel list-windows  列出可见窗口（标题 + 坐标），用于挑选录制目标
-  sightreel help          人类可读帮助
-  sightreel help --json   机器可读能力声明（供 AI Agent 发现与调用）
+  sighticle screenshot --out <path.png> [--region x,y,w,h]
+  sighticle record --seconds <n> --out <path.mp4|.gif> [--region x,y,w,h] [--window <title>] [--mic] [--sys-audio] [--fps <n>] [--scale <w>] [--crf <n>] [--stop-file <path>]
+  sighticle record --camera --seconds <n> --out <path.mp4|.gif> [--mic] [--sys-audio]
+  sighticle analyze --in <video.mp4> [--frames <n>] [--sheet <path>] [--no-scenes]
+  sighticle doctor        环境自检：FFmpeg 是否可用、版本、路径、安装建议
+  sighticle list-windows  列出可见窗口（标题 + 坐标），用于挑选录制目标
+  sighticle help          人类可读帮助
+  sighticle help --json   机器可读能力声明（供 AI Agent 发现与调用）
 
 参数：
   --out         输出文件路径（必填）
@@ -183,7 +183,7 @@ pub fn run(args: &[String]) -> i32 {
 /// 触发时机与调用方式。与 SKILL.md 同源信息，此处以 JSON 形式给程序读。
 fn declaration() -> serde_json::Value {
     json!({
-        "tool": "sightreel",
+        "tool": "sighticle",
         "version": env!("CARGO_PKG_VERSION"),
         "platform": "windows",
         "summary": "轻量屏幕截图与录屏（无头 CLI，零常驻，输出文件 + 一行 JSON）",
@@ -195,14 +195,14 @@ fn declaration() -> serde_json::Value {
         "commands": [
             {
                 "name": "screenshot",
-                "usage": "sightreel screenshot --out <path.png> [--region x,y,w,h]",
+                "usage": "sighticle screenshot --out <path.png> [--region x,y,w,h]",
                 "description": "截取屏幕指定区域（缺省主屏整屏）保存为 PNG",
                 "required": ["--out"],
                 "optional": ["--region"],
             },
             {
                 "name": "record",
-                "usage": "sightreel record [--seconds <n>] --out <path.mp4|.gif> [--region x,y,w,h] [--window <title>] [--camera] [--mic] [--sys-audio] [--stop-file <path>] [--fps <n>] [--scale <w>] [--crf <n>] [--no-cursor] [--no-glow]",
+                "usage": "sighticle record [--seconds <n>] --out <path.mp4|.gif> [--region x,y,w,h] [--window <title>] [--camera] [--mic] [--sys-audio] [--stop-file <path>] [--fps <n>] [--scale <w>] [--crf <n>] [--no-cursor] [--no-glow]",
                 "description": "录制屏幕（或 --camera 摄像头）为 MP4/GIF；--seconds 与 --stop-file 至少给一个。默认把系统真实指针及其轮廓微光画进画面",
                 "required": ["--out"],
                 "optional": ["--seconds", "--region", "--window", "--camera", "--mic", "--sys-audio", "--stop-file", "--fps", "--scale", "--crf", "--no-cursor", "--no-glow", "--frames", "--frames-dir", "--sheet", "--cols", "--scenes", "--scene-threshold"],
@@ -210,28 +210,28 @@ fn declaration() -> serde_json::Value {
             },
             {
                 "name": "analyze",
-                "usage": "sightreel analyze --in <video.mp4> [--frames <n>] [--sheet <path>] [--cols <n>] [--no-scenes] [--scene-threshold <f>] [--scale <w>]",
+                "usage": "sighticle analyze --in <video.mp4> [--frames <n>] [--sheet <path>] [--cols <n>] [--no-scenes] [--scene-threshold <f>] [--scale <w>]",
                 "description": "分析已有视频：返回时间轴（时长/分辨率/帧率/场景切换点/分段），可按需抽取关键帧与生成拼图。视频用于看流程与节奏，关键帧用于看 UI 细节",
                 "required": ["--in"],
                 "optional": ["--frames", "--frames-dir", "--sheet", "--cols", "--scenes", "--no-scenes", "--scene-threshold", "--scale"],
             },
             {
                 "name": "doctor",
-                "usage": "sightreel doctor",
+                "usage": "sighticle doctor",
                 "description": "环境自检：FFmpeg 是否可用、版本、解析到的路径与来源；缺失时给出可直接复制的安装命令。建议在首次录制或 analyze 之前调用一次",
                 "required": [],
                 "optional": [],
             },
             {
                 "name": "list-windows",
-                "usage": "sightreel list-windows",
+                "usage": "sighticle list-windows",
                 "description": "列出当前可见窗口的标题、进程名与物理像素坐标（最上层在前），配合 record --window 使用",
                 "required": [],
                 "optional": [],
             },
             {
                 "name": "help",
-                "usage": "sightreel help [--json]",
+                "usage": "sighticle help [--json]",
                 "description": "人类可读帮助 / 机器可读能力声明（本文件）",
                 "required": [],
                 "optional": ["--json"],
@@ -244,14 +244,14 @@ fn declaration() -> serde_json::Value {
             "exit_code": {"0": "成功", "1": "失败"},
         },
         "examples": [
-            "sightreel screenshot --out D:/shots/a.png --region 0,0,800,600",
-            "sightreel list-windows",
-            "sightreel record --window \"Visual Studio Code\" --seconds 20 --out D:/rec/demo.mp4",
-            "sightreel record --seconds 10 --out D:/rec/demo.mp4 --mic --sys-audio",
-            "sightreel record --seconds 30 --out D:/rec/light.mp4 --fps 15 --scale 1280 --crf 28",
-            "sightreel record --stop-file D:/rec/stop.flag --out D:/rec/demo.mp4",
-            "sightreel analyze --in D:/rec/demo.mp4 --frames 6 --sheet D:/rec/demo_sheet.jpg",
-            "sightreel doctor",
+            "sighticle screenshot --out D:/shots/a.png --region 0,0,800,600",
+            "sighticle list-windows",
+            "sighticle record --window \"Visual Studio Code\" --seconds 20 --out D:/rec/demo.mp4",
+            "sighticle record --seconds 10 --out D:/rec/demo.mp4 --mic --sys-audio",
+            "sighticle record --seconds 30 --out D:/rec/light.mp4 --fps 15 --scale 1280 --crf 28",
+            "sighticle record --stop-file D:/rec/stop.flag --out D:/rec/demo.mp4",
+            "sighticle analyze --in D:/rec/demo.mp4 --frames 6 --sheet D:/rec/demo_sheet.jpg",
+            "sighticle doctor",
         ],
         "constraints": [
             "Windows 专有（WGC 屏幕采集 / WASAPI 系统声音）",
@@ -277,7 +277,7 @@ fn init_runtime() {
 fn app_data_dir() -> PathBuf {
     std::env::var("LOCALAPPDATA")
         .map(|v| PathBuf::from(v).join(APP_DATA_SUBDIR))
-        .unwrap_or_else(|_| std::env::temp_dir().join("sightreel"))
+        .unwrap_or_else(|_| std::env::temp_dir().join("sighticle"))
 }
 
 fn recordings_dir() -> PathBuf {
@@ -1324,7 +1324,7 @@ mod tests {
     #[test]
     fn declaration_is_machine_readable() {
         let d = declaration();
-        assert_eq!(d["tool"], "sightreel");
+        assert_eq!(d["tool"], "sighticle");
         assert_eq!(d["platform"], "windows");
         // 各子命令都在
         let names: Vec<&str> = d["commands"]

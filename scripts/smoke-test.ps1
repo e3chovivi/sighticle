@@ -1,4 +1,4 @@
-# sightreel 冒烟测试（Windows / PowerShell）
+# sighticle 冒烟测试（Windows / PowerShell）
 #
 # 用法（在仓库根目录执行）：
 #   powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\smoke-test.ps1
@@ -8,12 +8,12 @@
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
-$exe = Join-Path $root "src-tauri\target\release\sightreel.exe"
+$exe = Join-Path $root "src-tauri\target\release\sighticle.exe"
 
 if (-not (Test-Path $exe)) {
-    $debug = Join-Path $root "src-tauri\target\debug\sightreel.exe"
+    $debug = Join-Path $root "src-tauri\target\debug\sighticle.exe"
     if (Test-Path $debug) { $exe = $debug } else {
-        Write-Host "[FAIL] 找不到 sightreel.exe，请先构建：" -ForegroundColor Red
+        Write-Host "[FAIL] 找不到 sighticle.exe，请先构建：" -ForegroundColor Red
         Write-Host "       cd src-tauri; cargo build --release"
         exit 1
     }
@@ -112,6 +112,6 @@ if ($failed -eq 0) {
     exit 0
 } else {
     Write-Host "有 $failed 项失败，请把上面的 FAIL 行连同日志一起发我。" -ForegroundColor Red
-    Write-Host "日志: $env:LOCALAPPDATA\io.github.echovivi.sightreel\logs\sightreel.log"
+    Write-Host "日志: $env:LOCALAPPDATA\app.sighticle.desktop\logs\sighticle.log"
     exit 1
 }

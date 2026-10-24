@@ -1,4 +1,4 @@
-//! sightreel：轻量截图 / 录屏工具，让 AI Agent 回看自己做过的事
+//! sighticle：轻量截图 / 录屏工具，让 AI Agent 回看自己做过的事
 //! M1：托盘常驻 + 全局快捷键唤起模式选择层 + 区域框选上报
 //! M2/M3：截图（xcap）+ 标注后复制/保存；区域录屏（xcap + FFmpeg）
 
@@ -25,14 +25,17 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 /// 应用标识，必须与 `tauri.conf.json` 的 `identifier` 保持一致：
 /// CLI 用它定位与 GUI 相同的设置/临时目录，设置模块用它做旧版配置迁移。
-pub const APP_IDENTIFIER: &str = "io.github.echovivi.sightreel";
-/// 改名前的正式标识，仅用于把老用户的设置迁移过来。
-pub const LEGACY_IDENTIFIER: &str = "io.github.e3chovivi.light-capture";
+pub const APP_IDENTIFIER: &str = "app.sighticle.desktop";
+/// 改名前的正式标识，仅用于把老用户的设置迁移过来（按时间倒序）。
+pub const LEGACY_IDENTIFIERS: &[&str] = &[
+    "io.github.echovivi.sightreel",
+    "io.github.e3chovivi.light-capture",
+];
 
-/// 日志目录：默认放应用数据目录；用环境变量 `SIGHTREEL_LOG_DIR` 可整体改到别处
+/// 日志目录：默认放应用数据目录；用环境变量 `SIGHTICLE_LOG_DIR` 可整体改到别处
 /// （例如放 D 盘避免占用系统盘）。目标不可写时回退到应用数据目录。
 pub fn log_dir(app_data: &Path) -> PathBuf {
-    match std::env::var("SIGHTREEL_LOG_DIR") {
+    match std::env::var("SIGHTICLE_LOG_DIR") {
         Ok(v) if !v.trim().is_empty() => logger::prefer_dir(Path::new(v.trim()), app_data),
         _ => app_data.to_path_buf(),
     }
@@ -490,7 +493,7 @@ fn list_windows(app: AppHandle) -> Result<Vec<WindowRect>, String> {
             continue;
         }
         let title = w.title().unwrap_or_default();
-        if title.trim().is_empty() || title == "sightreel" {
+        if title.trim().is_empty() || title == "sighticle" {
             continue;
         }
         let (wx, wy) = (w.x().unwrap_or(0), w.y().unwrap_or(0));
@@ -955,7 +958,7 @@ fn build_settings_window(app: &AppHandle) -> Result<(), String> {
         SETTINGS_LABEL,
         WebviewUrl::App("index.html#settings".into()),
     )
-    .title("sightreel 设置")
+    .title("sighticle 设置")
     .inner_size(560.0, 560.0)
     .resizable(false)
     .center()
@@ -1024,7 +1027,7 @@ pub fn run() {
             // 日志尽早初始化：后续每一步关键流程与**原始错误详情**都会落到文件，
             // 用户复现一次即可事后精确定位（GUI 里只能看到笼统提示）。
             if let Ok(dir) = app.path().app_local_data_dir() {
-                // 日志可经 SIGHTREEL_LOG_DIR 改到别的盘；设置仍固定留在系统数据目录。
+                // 日志可经 SIGHTICLE_LOG_DIR 改到别的盘；设置仍固定留在系统数据目录。
                 logger::init(&log_dir(&dir));
                 settings::init(&dir);
             }
@@ -1042,7 +1045,7 @@ pub fn run() {
             // 覆盖层窗口：全屏透明、无边框、置顶、不占任务栏，默认隐藏
             let overlay =
                 WebviewWindowBuilder::new(app, OVERLAY_LABEL, WebviewUrl::App("index.html".into()))
-                    .title("sightreel")
+                    .title("sighticle")
                     .fullscreen(true)
                     .transparent(true)
                     .decorations(false)
@@ -1060,7 +1063,7 @@ pub fn run() {
                 RECBAR_LABEL,
                 WebviewUrl::App("index.html#recbar".into()),
             )
-            .title("sightreel-recbar")
+            .title("sighticle-recbar")
             .inner_size(380.0, 60.0)
             .transparent(true)
             .decorations(false)
@@ -1109,7 +1112,7 @@ pub fn run() {
             TrayIconBuilder::new()
                 .icon(app.default_window_icon().expect("缺少应用图标").clone())
                 .menu(&menu)
-                .tooltip("sightreel")
+                .tooltip("sighticle")
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "capture" => toggle_overlay(app),

@@ -1,6 +1,6 @@
 <div align="center">
 
-# Sightreel
+# Sighticle
 
 **Let AI see what it just did — a lightweight screen recorder and capture tool**
 
@@ -13,11 +13,11 @@
 
 ---
 
-## Why Sightreel
+## Why Sighticle
 
 Agents can already click buttons, run workflows and cut video for us — but they cannot see what the screen looks like after they are done. A screenshot captures one instant; a text log has no picture. Video is the closest thing to actually having watched it happen: frames, timing and rhythm all in one place.
 
-Sightreel exposes screenshots and screen recording as commands an Agent can call directly, and ships a GUI that is pleasant for humans too. The name comes from *sight* + *reel*: eyes for the machine, a reel for the work.
+Sighticle exposes screenshots and screen recording as commands an Agent can call directly, and ships a GUI that is pleasant for humans too. The name comes from *sight* + *-icle*: every capture is a small, concrete piece of sight left for the machine.
 
 ## Two ways to use it
 
@@ -25,7 +25,7 @@ Sightreel exposes screenshots and screen recording as commands an Agent can call
 
 ```bash
 # Start recording without a fixed duration; create stop.flag when done
-sightreel record --stop-file D:/rec/stop.flag --out D:/rec/demo.mp4
+sighticle record --stop-file D:/rec/stop.flag --out D:/rec/demo.mp4
 
 # When the process exits, stdout carries exactly one line of JSON
 {"ok":true,"path":"D:/rec/demo.mp4","seconds":38.2,"stopped_by":"stop_file",...}
@@ -34,7 +34,7 @@ sightreel record --stop-file D:/rec/stop.flag --out D:/rec/demo.mp4
 Afterwards, ask the tool for a director's cut of the facts — or hand the video straight to a multimodal model:
 
 ```bash
-sightreel analyze --in demo.mp4 --frames 6 --sheet sheet.jpg
+sighticle analyze --in demo.mp4 --frames 6 --sheet sheet.jpg
 # duration, resolution, frame rate, scene cuts, segments and key-frame paths in one call
 ```
 
@@ -77,7 +77,7 @@ The app lives in the tray and opens on a hotkey. Pick **Screenshot / Record / Ca
 
 ## Install and build
 
-- **Installer**: Windows 10 or later. Download `sightreel_<version>_x64-setup.exe` from Releases — FFmpeg is bundled, nothing else to install
+- **Installer**: Windows 10 or later. Download `sighticle_<version>_x64-setup.exe` from Releases — FFmpeg is bundled, nothing else to install
 - **From source**: requires [Node.js](https://nodejs.org/) + [pnpm](https://pnpm.io/) + [Rust](https://rustup.rs/)
 
 ```bash
@@ -87,7 +87,7 @@ pnpm tauri build      # package (vendor/ffmpeg.exe must exist)
 cd src-tauri && cargo test   # 102 unit tests
 ```
 
-The installer bundles FFmpeg. The repository does not ship that binary, so place `ffmpeg.exe` in `vendor/` before building from source. At runtime, `SIGHTREEL_FFMPEG` can point to a custom binary; run `sightreel doctor` to verify. Logs can be moved to another disk with `SIGHTREEL_LOG_DIR`.
+The installer bundles FFmpeg. The repository does not ship that binary, so place `ffmpeg.exe` in `vendor/` before building from source. At runtime, `SIGHTICLE_FFMPEG` can point to a custom binary; run `sighticle doctor` to verify. Logs can be moved to another disk with `SIGHTICLE_LOG_DIR`.
 
 Development notes, architecture constraints and TODOs live in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
@@ -95,4 +95,4 @@ Development notes, architecture constraints and TODOs live in [docs/DEVELOPMENT.
 
 This project is released under the [MIT License](LICENSE).
 
-The bundled FFmpeg is the [gyan.dev essentials build](https://www.gyan.dev/ffmpeg/builds/) (8.1.1, `--enable-gpl`) and is distributed under GPLv3. It ships as a standalone executable; its source is available at [ffmpeg.org](https://ffmpeg.org/download.html). For a fully permissive distribution, skip the bundled copy and point `SIGHTREEL_FFMPEG` at your own FFmpeg build.
+The bundled FFmpeg is the [gyan.dev essentials build](https://www.gyan.dev/ffmpeg/builds/) (8.1.1, `--enable-gpl`) and is distributed under GPLv3. It ships as a standalone executable; its source is available at [ffmpeg.org](https://ffmpeg.org/download.html). For a fully permissive distribution, skip the bundled copy and point `SIGHTICLE_FFMPEG` at your own FFmpeg build.

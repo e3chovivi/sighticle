@@ -1,6 +1,6 @@
 <div align="center">
 
-# Sightreel
+# Sighticle
 
 **让 AI 看得见自己做过的事 · 轻量截图 / 录屏应用**
 
@@ -13,11 +13,11 @@
 
 ---
 
-## 为什么做 Sightreel
+## 为什么做 Sighticle
 
 Agent 已经能替我们点按钮、跑流程、剪视频，但它看不见自己做完之后屏幕变成了什么样。截图只留下一个瞬间，文字日志没有画面；真正接近"亲眼看了一遍"的记录方式是视频——画面、时序、节奏都在里面。
 
-Sightreel 把截图与录屏做成 Agent 可以直接调用的命令，同时给人一套称手的图形界面。名字取自 sight + reel：给机器一双眼睛，也给操作留一卷底片。
+Sighticle 把截图与录屏做成 Agent 可以直接调用的命令，同时给人一套称手的图形界面。名字取自 sight + -icle（小东西）：每一次截图、每一段录像，都是留给机器的一小片视觉。
 
 ## 两种用法
 
@@ -25,7 +25,7 @@ Sightreel 把截图与录屏做成 Agent 可以直接调用的命令，同时给
 
 ```bash
 # 开始录制，不预设时长；Agent 认为够了就创建 stop.flag
-sightreel record --stop-file D:/rec/stop.flag --out D:/rec/demo.mp4
+sighticle record --stop-file D:/rec/stop.flag --out D:/rec/demo.mp4
 
 # 进程退出时 stdout 恰好一行 JSON
 {"ok":true,"path":"D:/rec/demo.mp4","seconds":38.2,"stopped_by":"stop_file",...}
@@ -34,7 +34,7 @@ sightreel record --stop-file D:/rec/stop.flag --out D:/rec/demo.mp4
 录制结束后，可以让工具直接给出"导演视角"的信息，也可以把视频原样交给多模态模型：
 
 ```bash
-sightreel analyze --in demo.mp4 --frames 6 --sheet sheet.jpg
+sighticle analyze --in demo.mp4 --frames 6 --sheet sheet.jpg
 # 时长、分辨率、帧率、场景切换点、分段与关键帧路径，一次返回
 ```
 
@@ -77,7 +77,7 @@ sightreel analyze --in demo.mp4 --frames 6 --sheet sheet.jpg
 
 ## 安装与构建
 
-- **安装包**：Windows 10 及以上，从 Releases 下载 `sightreel_<版本>_x64-setup.exe` 安装即可，无需另装 FFmpeg
+- **安装包**：Windows 10 及以上，从 Releases 下载 `sighticle_<版本>_x64-setup.exe` 安装即可，无需另装 FFmpeg
 - **从源码**：需要 [Node.js](https://nodejs.org/) + [pnpm](https://pnpm.io/) + [Rust](https://rustup.rs/)
 
 ```bash
@@ -87,7 +87,7 @@ pnpm tauri build      # 打包（需先准备 vendor/ffmpeg.exe）
 cd src-tauri && cargo test   # 102 个单元测试
 ```
 
-打包会把 FFmpeg 一并写入安装包；仓库不内置该二进制，从源码打包前请把 `ffmpeg.exe` 放到 `vendor/`。运行时也可用环境变量 `SIGHTREEL_FFMPEG` 指定自定义路径，装好后跑 `sightreel doctor` 复核。日志目录可用 `SIGHTREEL_LOG_DIR` 指到其它磁盘。
+打包会把 FFmpeg 一并写入安装包；仓库不内置该二进制，从源码打包前请把 `ffmpeg.exe` 放到 `vendor/`。运行时也可用环境变量 `SIGHTICLE_FFMPEG` 指定自定义路径，装好后跑 `sighticle doctor` 复核。日志目录可用 `SIGHTICLE_LOG_DIR` 指到其它磁盘。
 
 开发细节、架构约束与待办见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)。
 
@@ -95,4 +95,4 @@ cd src-tauri && cargo test   # 102 个单元测试
 
 本项目以 [MIT](LICENSE) 发布。
 
-安装包内置的 FFmpeg 来自 [gyan.dev 的 essentials build](https://www.gyan.dev/ffmpeg/builds/)（8.1.1，`--enable-gpl`），以 GPLv3 分发。它作为独立可执行文件随安装包提供，源代码见 [ffmpeg.org](https://ffmpeg.org/download.html)。如需完全宽松许可的分发方式，可不使用内置版本，改用 `SIGHTREEL_FFMPEG` 指向自备的 FFmpeg。
+安装包内置的 FFmpeg 来自 [gyan.dev 的 essentials build](https://www.gyan.dev/ffmpeg/builds/)（8.1.1，`--enable-gpl`），以 GPLv3 分发。它作为独立可执行文件随安装包提供，源代码见 [ffmpeg.org](https://ffmpeg.org/download.html)。如需完全宽松许可的分发方式，可不使用内置版本，改用 `SIGHTICLE_FFMPEG` 指向自备的 FFmpeg。

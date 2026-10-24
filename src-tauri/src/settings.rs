@@ -126,12 +126,14 @@ fn path() -> Option<&'static PathBuf> {
 
 /// 旧版应用标识对应的设置文件。标识符从模板值改为正式值后，
 /// 老用户的快捷键/增益/凭证不该凭空丢失，首次启动时迁移一次。
-fn legacy_settings_path() -> Option<PathBuf> {
-    std::env::var("LOCALAPPDATA").ok().map(|v| {
-        PathBuf::from(v)
-            .join(crate::LEGACY_IDENTIFIER)
-            .join("settings.json")
-    })
+fn legacy_settings_paths() -> Vec<PathBuf> {
+    match std::env::var("LOCALAPPDATA") {
+        Ok(v) => crate::LEGACY_IDENTIFIERS
+            .iter()
+            .map(|id| PathBuf::from(&v).join(id).join("settings.json"))
+            .collect(),
+        Err(_) => Vec::new(),
+    }
 }
 
 /// 只有当 `dir` 确实是正式的应用数据目录时才做迁移。
@@ -148,9 +150,10 @@ pub fn init(dir: &Path) {
     let _ = std::fs::create_dir_all(dir);
     let p = dir.join("settings.json");
     if !p.exists() && is_app_data_dir(dir) {
-        if let Some(legacy) = legacy_settings_path() {
+        for legacy in legacy_settings_paths() {
             if legacy.exists() {
                 let _ = std::fs::copy(&legacy, &p);
+                break;
             }
         }
     }

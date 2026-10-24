@@ -1,8 +1,8 @@
 [package]
-name = "sightreel"
+name = "sighticle"
 version = "0.1.0"
 description = "轻量级截图 / 录屏工具"
-authors = ["sightreel contributors"]
+authors = ["sighticle contributors"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -11,7 +11,7 @@ edition = "2021"
 # The `_lib` suffix may seem redundant but it is necessary
 # to make the lib name unique and wouldn't conflict with the bin name.
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
-name = "sightreel_lib"
+name = "sighticle_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 # 生产模式开关（Tauri 标准特性，DO NOT REMOVE）：

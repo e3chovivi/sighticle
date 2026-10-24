@@ -1,12 +1,12 @@
 ---
-name: sightreel
+name: sighticle
 description: Windows 轻量屏幕截图与录屏工具（CLI 无头模式）。当需要截取屏幕、录制屏幕/系统声音/麦克风/摄像头、或用户要求「截图」「录屏」「录制这段操作」时调用。零常驻、无窗口、单行 JSON 输出。
 ---
 
-# sightreel 能力声明
+# sighticle 能力声明
 
 给 AI Agent 的工具说明书：什么时候用、怎么调、怎么停、结果怎么看。
-机器可读版本执行 `sightreel help --json` 获取（与本文件同源）。
+机器可读版本执行 `sighticle help --json` 获取（与本文件同源）。
 
 ## 触发时机
 
@@ -20,7 +20,7 @@ description: Windows 轻量屏幕截图与录屏工具（CLI 无头模式）。�
 ### 1. 截图
 
 ```text
-sightreel screenshot --out <path.png> [--region x,y,w,h]
+sighticle screenshot --out <path.png> [--region x,y,w,h]
 ```
 
 - `--out`（必填）：PNG 输出路径
@@ -30,7 +30,7 @@ sightreel screenshot --out <path.png> [--region x,y,w,h]
 ### 2. 录屏
 
 ```text
-sightreel record [--seconds <n>] --out <path.mp4|.gif> [--region x,y,w,h] [--window <title>] [--camera] [--mic] [--sys-audio] [--stop-file <path>] [--fps <n>] [--scale <w>] [--crf <n>] [--no-cursor] [--no-glow]
+sighticle record [--seconds <n>] --out <path.mp4|.gif> [--region x,y,w,h] [--window <title>] [--camera] [--mic] [--sys-audio] [--stop-file <path>] [--fps <n>] [--scale <w>] [--crf <n>] [--no-cursor] [--no-glow]
 ```
 
 - `--out`（必填）：`.mp4` 或 `.gif`（后缀决定格式）
@@ -49,7 +49,7 @@ sightreel record [--seconds <n>] --out <path.mp4|.gif> [--region x,y,w,h] [--win
 ### 2.1 列出窗口（按标题录制前先查）
 
 ```text
-sightreel list-windows
+sighticle list-windows
 ```
 
 返回当前可见窗口的标题、进程名与物理像素坐标（最上层在前），配合 `--window` 使用。
@@ -57,7 +57,7 @@ sightreel list-windows
 ### 3. 分析视频：时间轴 + 关键帧 + 拼图
 
 ```text
-sightreel analyze --in <video.mp4> [--frames <n>] [--sheet <path>] [--cols <n>] [--no-scenes] [--scene-threshold <f>] [--scale <w>]
+sighticle analyze --in <video.mp4> [--frames <n>] [--sheet <path>] [--cols <n>] [--no-scenes] [--scene-threshold <f>] [--scale <w>]
 ```
 
 返回 `timeline` 对象：
@@ -86,20 +86,20 @@ sightreel analyze --in <video.mp4> [--frames <n>] [--sheet <path>] [--cols <n>] 
 ### 4. 环境自检（建议首次调用前先查）
 
 ```text
-sightreel doctor
+sighticle doctor
 ```
 
 返回 `ffmpeg` 对象：`found`、`program`（路径）、`origin`（env / exe_dir / path / well_known）、`version`，缺失时给出 `error` 与可直接复制的 `hint`。
 
 - **截图不需要 FFmpeg**；录制、导出、抽帧、场景检测需要。
-- 找到后可用环境变量 `SIGHTREEL_FFMPEG` 指定自定义路径（文件或所在目录）。
+- 找到后可用环境变量 `SIGHTICLE_FFMPEG` 指定自定义路径（文件或所在目录）。
 - 找不到时按提示安装：`winget install --id Gyan.FFmpeg`，或把 `ffmpeg.exe` 放到主程序同目录。
 
 ### 5. 帮助
 
 ```text
-sightreel help          # 人类可读
-sightreel help --json   # 机器可读能力声明（推荐先读这个）
+sighticle help          # 人类可读
+sighticle help --json   # 机器可读能力声明（推荐先读这个）
 ```
 
 ## 如何随时停止录屏（AI 关键流程）
@@ -108,7 +108,7 @@ sightreel help --json   # 机器可读能力声明（推荐先读这个）
 
 1. 发起录制（后台运行，不加 `--seconds` 或给个大上限）：
    ```text
-   sightreel record --stop-file D:/rec/stop.flag --out D:/rec/demo.mp4 --mic
+   sighticle record --stop-file D:/rec/stop.flag --out D:/rec/demo.mp4 --mic
    ```
 2. 等待用户/流程认为内容够了（100ms 级响应）
 3. 创建停止文件即停止：`echo stop > D:/rec/stop.flag`（PowerShell：`New-Item -ItemType File -Force D:\rec\stop.flag`）
@@ -128,4 +128,4 @@ sightreel help --json   # 机器可读能力声明（推荐先读这个）
 - Windows 专有（WGC 屏幕采集 / WASAPI 系统声音），不支持 macOS
 - 不建窗口、不注册热键/托盘，可与 GUI 实例并存互不干扰
 - 零常驻：进程退出即释放全部资源
-- 可执行文件位置：安装或加入 PATH 后直接用 `sightreel`；未安装时为仓库内构建产物 `src-tauri\target\release\sightreel.exe`（Windows，无头 CLI，启动不弹窗口）
+- 可执行文件位置：安装或加入 PATH 后直接用 `sighticle`；未安装时为仓库内构建产物 `src-tauri\target\release\sighticle.exe`（Windows，无头 CLI，启动不弹窗口）

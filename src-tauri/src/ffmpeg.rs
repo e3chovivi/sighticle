@@ -8,7 +8,7 @@
 //! 内置不是唯一来源，这里仍要做「可靠的定位 + 说得清的错误」：
 //!
 //! 查找顺序：
-//!   1. 环境变量 `SIGHTREEL_FFMPEG`（指向 exe 或含 ffmpeg.exe 的目录）
+//!   1. 环境变量 `SIGHTICLE_FFMPEG`（指向 exe 或含 ffmpeg.exe 的目录）
 //!   2. 程序自身所在目录（便携版常见做法：ffmpeg.exe 与主程序放一起；
 //!      安装包内置副本位于主程序同目录的 resources/ 下）
 //!   3. 系统 PATH
@@ -22,7 +22,7 @@ use std::process::Command;
 use std::sync::OnceLock;
 
 /// 环境变量：显式指定 ffmpeg 路径
-pub const ENV_OVERRIDE: &str = "SIGHTREEL_FFMPEG";
+pub const ENV_OVERRIDE: &str = "SIGHTICLE_FFMPEG";
 
 /// ffmpeg 的来源，用于诊断输出
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -228,7 +228,7 @@ fn missing_message() -> String {
          \x20 scoop install ffmpeg\n\
          或下载后把 ffmpeg.exe 放到主程序同目录，\n\
          也可用环境变量 {ENV_OVERRIDE} 指向它。\n\
-         装好后执行 `sightreel doctor` 复核。"
+         装好后执行 `sighticle doctor` 复核。"
     )
 }
 
