@@ -2,10 +2,9 @@
 
 # Sightreel
 
-**Let AI see what it just did — a lightweight screen recorder and capture tool for Windows**
+**Let AI see what it just did — a lightweight screen recorder and capture tool**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-![Platform](https://img.shields.io/badge/platform-Windows%2010%2B-0078d4)
 ![Built with](https://img.shields.io/badge/built%20with-Tauri%202%20%2B%20Rust-24c8db)
 
 [简体中文](README.md) | English
@@ -75,14 +74,6 @@ The app lives in the tray and opens on a hotkey. Pick **Screenshot / Record / Ca
   <b>Settings: hotkey, audio gain, save location</b><br/>
   <img src="docs/images/screenshot-settings.png" alt="Settings" width="72%" />
 </p>
-
-## Privacy
-
-Offline by default: no account, no telemetry, and captures never leave your machine.
-
-The one exception is the **optional** subtitle feature. It is off by default; only after you provide your own API key and enable it does the exported audio get uploaded to the provider you choose (Alibaba Cloud DashScope or Volcengine) for transcription. With it disabled, the app makes no network requests at all.
-
-Logs and settings stay local. The settings file lives at `%LOCALAPPDATA%\io.github.echovivi.sightreel\settings.json`; API keys are stored in plain text there, so keep it private.
 
 ## Install and build
 

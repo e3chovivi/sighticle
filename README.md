@@ -2,10 +2,9 @@
 
 # Sightreel
 
-**让 AI 看得见自己做过的事 · 轻量 Windows 截图 / 录屏**
+**让 AI 看得见自己做过的事 · 轻量截图 / 录屏应用**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-![Platform](https://img.shields.io/badge/platform-Windows%2010%2B-0078d4)
 ![Built with](https://img.shields.io/badge/built%20with-Tauri%202%20%2B%20Rust-24c8db)
 
 简体中文 | [English](README_EN.md)
@@ -75,14 +74,6 @@ sightreel analyze --in demo.mp4 --frames 6 --sheet sheet.jpg
   <b>设置：快捷键、音频增益、保存位置</b><br/>
   <img src="docs/images/screenshot-settings.png" alt="设置" width="72%" />
 </p>
-
-## 隐私
-
-默认不联网：无账号、无遥测，截图与录制文件不会离开本机。
-
-唯一例外是**可选**的「字幕识别」：默认关闭，只有填入自己的 API Key 并主动开启后，导出视频的音轨才会被上传到所选服务商（阿里云 DashScope 或火山引擎）做语音转写。关闭时不会有任何网络请求。
-
-日志与设置只写本机。设置文件位于 `%LOCALAPPDATA%\io.github.echovivi.sightreel\settings.json`，其中 API Key 为明文保存，请自行妥善保管。
 
 ## 安装与构建
 
