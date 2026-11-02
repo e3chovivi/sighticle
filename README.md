@@ -96,3 +96,14 @@ cd src-tauri && cargo test   # 102 个单元测试
 本项目以 [MIT](LICENSE) 发布。
 
 安装包内置的 FFmpeg 来自 [gyan.dev 的 essentials build](https://www.gyan.dev/ffmpeg/builds/)（8.1.1，`--enable-gpl`），以 GPLv3 分发。它作为独立可执行文件随安装包提供，源代码见 [ffmpeg.org](https://ffmpeg.org/download.html)。如需完全宽松许可的分发方式，可不使用内置版本，改用 `SIGHTICLE_FFMPEG` 指向自备的 FFmpeg。
+
+## 无头 CLI（无 Tauri / 无 WebView）
+
+除了 GUI 安装包，仓库还提供独立的 headless CLI，供 Agent / 脚本直接调用；它复用同一套截图、录屏、音频、指针、FFmpeg 与分析代码，但不启动 Tauri/WebView，也不建窗口。
+
+```powershell
+cargo build --release --manifest-path sighticle-cli/Cargo.toml
+# 产物：sighticle-cli/target/release/sighticle.exe
+```
+
+命令与 GUI 版 CLI 一致：`screenshot`、`record`、`analyze`、`doctor`、`list-windows`、`help --json`。详见 [`sighticle-cli/README.md`](sighticle-cli/README.md)。

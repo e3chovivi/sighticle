@@ -20,3 +20,5 @@ logs/
 .env.*
 *.pem
 *.key
+sighticle-cli/target/
+captures/
