@@ -36,6 +36,8 @@ Afterwards, ask the tool for a director's cut of the facts — or hand the video
 ```bash
 sighticle analyze --in demo.mp4 --frames 6 --sheet sheet.jpg
 # duration, resolution, frame rate, scene cuts, segments and key-frame paths in one call
+sighticle analyze --in demo.mp4 --rhythm
+# rhythm data: audio onset table, per-frame motion energy, BPM and beat alignment — “does this video feel rhythmic”, quantified
 ```
 
 ### For Humans: tray + hotkey
@@ -50,6 +52,7 @@ The app lives in the tray and opens on a hotkey. Pick **Screenshot / Record / Ca
 - **Record and trim** — record a region or the full screen, export MP4 or GIF, and keep only the needed span on a timeline
 - **Audio** — microphone and system sound can be enabled and gain-adjusted separately, then mixed into one track
 - **Timeline for models** — `analyze` reports scene cuts and segments; `--frames` / `--sheet` also extract key frames or a contact sheet. Watch the flow as video, inspect UI details as stills — fewer tokens, better answers
+- **Rhythm analysis** — `analyze --rhythm` emits the audio onset table, per-frame motion energy, BPM and beat alignment, so a model can tell whether a video feels rhythmic and how far a replica is from its reference
 - **Automation contract** — headless CLI, single-line JSON on stdout, `--stop-file` for immediate stop, `--window` to record by window title, `--fps` / `--scale` / `--crf` for size and clarity, and `help --json` for a machine-readable manifest (see [SKILL.md](SKILL.md))
 - **Local first** — no account, no telemetry, no network requests by default
 

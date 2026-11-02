@@ -16,6 +16,8 @@ mod audio;
 mod cursor;
 #[path = "../../src-tauri/src/recorder.rs"]
 mod recorder;
+#[path = "../../src-tauri/src/rhythm.rs"]
+mod rhythm;
 #[path = "../../src-tauri/src/cli.rs"]
 mod cli;
 

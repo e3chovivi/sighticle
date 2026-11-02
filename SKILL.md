@@ -57,7 +57,7 @@ sighticle list-windows
 ### 3. 分析视频：时间轴 + 关键帧 + 拼图
 
 ```text
-sighticle analyze --in <video.mp4> [--frames <n>] [--sheet <path>] [--cols <n>] [--no-scenes] [--scene-threshold <f>] [--scale <w>]
+sighticle analyze --in <video.mp4> [--frames <n>] [--sheet <path>] [--cols <n>] [--no-scenes] [--scene-threshold <f>] [--scale <w>] [--rhythm]
 ```
 
 返回 `timeline` 对象：
@@ -70,12 +70,14 @@ sighticle analyze --in <video.mp4> [--frames <n>] [--sheet <path>] [--cols <n>] 
 | `segments` | 相邻切换点之间的片段 `[{start, end, duration}]` |
 | `frames` / `frame_times` | 已抽取的关键帧路径与对应时刻（传了 `--frames` 才有） |
 | `sheet` | 拼图路径（传了 `--sheet` 才有） |
+| `rhythm` | 节奏数据 `audio.onsets` / `motion.energy` / `sync`（传了 `--rhythm` 才有） |
 
 - `--frames`：均匀抽取 1~120 张关键帧，默认目录为视频同级的 `<文件名>.frames/`
 - `--sheet`：把多帧平铺成一张图，适合一次性交给多模态模型
 - `--cols`：拼图列数，默认 4
 - `--no-scenes`：跳过场景检测（长视频可省时间）
 - `--scene-threshold`：切换灵敏度，默认 0.30
+- `--rhythm`：输出节奏数据——音频 onset 表（鼓点/重音时刻）、逐帧运动能量曲线与峰值、BPM、节拍对齐度（`sync.peak_to_onset`）；用于判断视频有没有律动、复刻片与参考片量化对比
 
 **推荐用法**：先不带参数跑一次 analyze 拿到时间轴，再按 `segments` 决定看哪几段；
 需要判断 UI 细节时用 `--frames 6 --sheet`，比让模型看完整视频更准也更省 token。

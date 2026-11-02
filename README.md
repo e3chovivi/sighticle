@@ -36,6 +36,8 @@ sighticle record --stop-file D:/rec/stop.flag --out D:/rec/demo.mp4
 ```bash
 sighticle analyze --in demo.mp4 --frames 6 --sheet sheet.jpg
 # 时长、分辨率、帧率、场景切换点、分段与关键帧路径，一次返回
+sighticle analyze --in demo.mp4 --rhythm
+# 节奏数据：音频 onset 表、逐帧运动能量、BPM、节拍对齐度——量化“这个视频有没有律动”
 ```
 
 ### 给人：托盘 + 快捷键
@@ -50,6 +52,7 @@ sighticle analyze --in demo.mp4 --frames 6 --sheet sheet.jpg
 - **录屏与选段** —— 区域或整屏录制，导出 MP4 / GIF；录制完成可在时间轴上只保留需要的片段
 - **声音** —— 麦克风与系统声音可分别开启、分别调节增益，输出混流为一条音轨
 - **时间轴与关键帧** —— `analyze` 给出场景切换点与分段，`--frames` / `--sheet` 顺带抽取关键帧或拼图；看流程用视频，看 UI 细节用关键帧，更省 token
+- **节奏分析** —— `analyze --rhythm` 输出音频 onset 表、逐帧运动能量曲线、BPM 与节拍对齐度，让模型能回答“这视频有没有律动、和参考片差多少”
 - **面向自动化的接口** —— 无头 CLI、stdout 单行 JSON、`--stop-file` 随时中止、`--window` 按窗口标题录制、`--fps` / `--scale` / `--crf` 控制体积，`help --json` 输出机器可读能力声明（见 [SKILL.md](SKILL.md)）
 - **本地优先** —— 无账号、无遥测，默认零网络请求
 

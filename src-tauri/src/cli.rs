@@ -34,7 +34,7 @@ sighticle CLI（无头模式，供脚本 / AI 调用）
   sighticle screenshot --out <path.png> [--region x,y,w,h]
   sighticle record --seconds <n> --out <path.mp4|.gif> [--region x,y,w,h] [--window <title>] [--mic] [--sys-audio] [--fps <n>] [--scale <w>] [--crf <n>] [--stop-file <path>]
   sighticle record --camera --seconds <n> --out <path.mp4|.gif> [--mic] [--sys-audio]
-  sighticle analyze --in <video.mp4> [--frames <n>] [--sheet <path>] [--no-scenes]
+  sighticle analyze --in <video.mp4> [--frames <n>] [--sheet <path>] [--no-scenes] [--rhythm]
   sighticle doctor        环境自检：FFmpeg 是否可用、版本、路径、安装建议
   sighticle list-windows  列出可见窗口（标题 + 坐标），用于挑选录制目标
   sighticle help          人类可读帮助
@@ -60,6 +60,7 @@ sighticle CLI（无头模式，供脚本 / AI 调用）
   --scenes      输出场景切换点与时间轴分段（analyze 默认开启；record 需显式加）
   --no-scenes   跳过场景检测（analyze 用；长视频可省时间）
   --scene-threshold  场景切换灵敏度 0.05~0.95（默认 0.30，越大越只保留明显变化）
+  --rhythm      analyze 用：输出节奏数据（音频 onset 表、逐帧运动能量、BPM、节拍对齐度）
   --no-cursor   不把鼠标指针画进画面（默认会画，AI 才能看到点在哪）
   --no-glow     不绘制指针轮廓微光（默认绘制，便于回看时定位）
 
@@ -114,6 +115,8 @@ enum Job {
         scale: Option<u32>,
         scenes: bool,
         scene_threshold: f64,
+        /// 是否输出节奏数据（音频 onset / 运动能量 / 对齐度）
+        rhythm: bool,
     },
     /// 环境自检：FFmpeg 定位与版本
     Doctor,
@@ -210,10 +213,10 @@ fn declaration() -> serde_json::Value {
             },
             {
                 "name": "analyze",
-                "usage": "sighticle analyze --in <video.mp4> [--frames <n>] [--sheet <path>] [--cols <n>] [--no-scenes] [--scene-threshold <f>] [--scale <w>]",
-                "description": "分析已有视频：返回时间轴（时长/分辨率/帧率/场景切换点/分段），可按需抽取关键帧与生成拼图。视频用于看流程与节奏，关键帧用于看 UI 细节",
+                "usage": "sighticle analyze --in <video.mp4> [--frames <n>] [--sheet <path>] [--cols <n>] [--no-scenes] [--scene-threshold <f>] [--scale <w>] [--rhythm]",
+                "description": "分析已有视频：返回时间轴（时长/分辨率/帧率/场景切换点/分段），可按需抽取关键帧与生成拼图。视频用于看流程与节奏，关键帧用于看 UI 细节；--rhythm 额外输出节奏数据（音频 onset 表、逐帧运动能量、BPM、节拍对齐度），供模型判断视频有没有律动、与参考片量化对比",
                 "required": ["--in"],
-                "optional": ["--frames", "--frames-dir", "--sheet", "--cols", "--scenes", "--no-scenes", "--scene-threshold", "--scale"],
+                "optional": ["--frames", "--frames-dir", "--sheet", "--cols", "--scenes", "--no-scenes", "--scene-threshold", "--scale", "--rhythm"],
             },
             {
                 "name": "doctor",
@@ -251,6 +254,7 @@ fn declaration() -> serde_json::Value {
             "sighticle record --seconds 30 --out D:/rec/light.mp4 --fps 15 --scale 1280 --crf 28",
             "sighticle record --stop-file D:/rec/stop.flag --out D:/rec/demo.mp4",
             "sighticle analyze --in D:/rec/demo.mp4 --frames 6 --sheet D:/rec/demo_sheet.jpg",
+            "sighticle analyze --in D:/rec/demo.mp4 --rhythm",
             "sighticle doctor",
         ],
         "constraints": [
@@ -313,6 +317,7 @@ fn parse(args: &[String]) -> Result<Job, String> {
     // 是否显式指定过场景检测开关（analyze 默认开启，record 默认关闭）
     let mut scenes_flag: Option<bool> = None;
     let mut scene_threshold: f64 = 0.30;
+    let mut rhythm = false;
     let mut i = 0;
     while i < rest.len() {
         let a = rest[i].as_str();
@@ -333,6 +338,7 @@ fn parse(args: &[String]) -> Result<Job, String> {
             }
             "--scenes" => scenes_flag = Some(true),
             "--no-scenes" => scenes_flag = Some(false),
+            "--rhythm" => rhythm = true,
             "--scene-threshold" => {
                 let v = need_value(rest, &mut i, "--scene-threshold")?;
                 scene_threshold = v
@@ -384,7 +390,8 @@ fn parse(args: &[String]) -> Result<Job, String> {
                 || mic
                 || sys_audio
                 || camera
-                || stop_file.is_some();
+                || stop_file.is_some()
+                || rhythm;
             if noisy {
                 return Err("doctor 不接受其它参数".into());
             }
@@ -423,6 +430,7 @@ fn parse(args: &[String]) -> Result<Job, String> {
                 // analyze 的主角就是时间轴，默认开启场景检测；可用 --no-scenes 跳过
                 scenes: scenes_flag.unwrap_or(true),
                 scene_threshold,
+                rhythm,
             })
         }
         "list-windows" => {
@@ -436,6 +444,7 @@ fn parse(args: &[String]) -> Result<Job, String> {
                 || stop_file.is_some()
                 || !cursor
                 || !cursor_glow
+                || rhythm
             {
                 return Err("list-windows 不接受其它参数".into());
             }
@@ -450,9 +459,10 @@ fn parse(args: &[String]) -> Result<Job, String> {
                 || !cursor
                 || !cursor_glow
                 || window.is_some()
+                || rhythm
             {
                 return Err(
-                    "screenshot 不支持 --seconds / --mic / --sys-audio / --camera / --stop-file / --window / --no-cursor / --no-glow"
+                    "screenshot 不支持 --seconds / --mic / --sys-audio / --camera / --stop-file / --window / --no-cursor / --no-glow / --rhythm"
                         .into(),
                 );
             }
@@ -468,6 +478,9 @@ fn parse(args: &[String]) -> Result<Job, String> {
             }
             if window.is_some() && region.is_some() {
                 return Err("--window 与 --region 只能二选一".into());
+            }
+            if rhythm {
+                return Err("record 不支持 --rhythm（节奏分析请用 analyze --in <视频> --rhythm）".into());
             }
             let enc = enc.validate()?;
             if !(0.05..=0.95).contains(&scene_threshold) {
@@ -608,6 +621,7 @@ fn analyze_video(
     scale: Option<u32>,
     want_scenes: bool,
     scene_threshold: f64,
+    rhythm: bool,
 ) -> Result<serde_json::Value, String> {
     let info = crate::frames::probe(input)?;
     crate::lclog!(
@@ -684,6 +698,11 @@ fn analyze_video(
         timeline["sheet"] = json!(path);
     }
 
+    if rhythm {
+        // 节奏数据是增值信息：失败也降级成字段级 error，不拖垮整个 analyze
+        timeline["rhythm"] = crate::rhythm::rhythm_json(input, info.fps);
+    }
+
     Ok(timeline)
 }
 
@@ -736,6 +755,7 @@ fn execute(job: Job) -> Result<serde_json::Value, String> {
             scale,
             scenes,
             scene_threshold,
+            rhythm,
         } => {
             let timeline = analyze_video(
                 &input,
@@ -746,6 +766,7 @@ fn execute(job: Job) -> Result<serde_json::Value, String> {
                 scale,
                 scenes,
                 scene_threshold,
+                rhythm,
             )?;
             Ok(json!({
                 "ok": true,
@@ -875,6 +896,8 @@ fn execute(job: Job) -> Result<serde_json::Value, String> {
                     enc.max_width,
                     scenes,
                     scene_threshold,
+                    // record 不支持 --rhythm：录制后分析只做时间轴/抽帧/拼图
+                    false,
                 ) {
                     Ok(v) => Some(v),
                     Err(e) => {

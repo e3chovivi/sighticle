@@ -11,6 +11,7 @@ mod ffmpeg;
 mod frames;
 mod logger;
 mod recorder;
+mod rhythm;
 mod settings;
 
 use std::path::{Path, PathBuf};
