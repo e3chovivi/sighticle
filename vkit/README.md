@@ -33,4 +33,6 @@ vkit gates   ref.mp4 mine.mp4    # 节奏门禁
 vkit ab      ref.mp4 mine.mp4    # 发给人看
 ```
 
+认证说明：仓库的 git credential.helper 会**自动**从环境变量 `GH_TOKEN_B` 读取 token（botmux 会话默认注入），agent 无需手工配置，也**不要把 token 写进任何文件**。
+
 姊妹工具：`sighticle analyze --in x.mp4 --rhythm`（音画节奏分析）；联系表/确定性/响度可用 `openfilm look`。
