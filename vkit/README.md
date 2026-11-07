@@ -33,6 +33,4 @@ vkit gates   ref.mp4 mine.mp4    # 节奏门禁
 vkit ab      ref.mp4 mine.mp4    # 发给人看
 ```
 
-认证说明：本仓库的 git 认证由本地环境注入的临时凭据自动完成；agent 无需手工配置。**永远不要把 token/密钥写进任何文件或 URL。**
-
 姊妹工具：`sighticle analyze --in x.mp4 --rhythm`（音画节奏分析）；联系表/确定性/响度可用 `openfilm look`。
