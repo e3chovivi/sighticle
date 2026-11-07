@@ -22,3 +22,4 @@ logs/
 *.key
 sighticle-cli/target/
 captures/
+__pycache__/
