@@ -9,7 +9,7 @@ Python 3 + ffmpeg + Pillow + numpy，无服务、无状态、纯函数。
 |---|---|
 | `vkit study 视频.mp4` | **观察/学习**：单视频风格报告（转场清单、每秒运动量曲线、逐2秒色彩性格、关键时刻网格图） |
 | `vkit watch 视频.mp4 [a-b]` | **密集看片**：区间抽帧拼带时间戳网格图（密度 `VKIT_FPS`，默认12） |
-| `vkit ab A.mp4 B.mp4` | 左右对比视频（A/B 角标+封面），输出直接可发的 botmux 命令 |
+| `vkit ab A.mp4 B.mp4` | 左右对比视频（A/B 角标+封面），适合直接分享给团队看 |
 | `vkit probe A.mp4 B.mp4` | 物理探针：缓动曲线形状相关度、峰值时刻、饱和/亮度偏差 |
 | `vkit judgeset A.mp4 B.mp4` | 固定10时间点成对对比表（验收制度执行器） |
 | `vkit gates A.mp4 B.mp4` | 节奏能量门禁（需 sighticle，`VKIT_SIGHTICLE` 指路径） |
